@@ -9,8 +9,6 @@
     ok: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg>',
     clock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>',
     lock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>',
-    users: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
-    alert: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>',
     check: '<svg viewBox="0 0 24 24"><path d="M5 12l5 5L20 7"/></svg>',
   };
 
@@ -82,13 +80,6 @@
 
   // ---------------- Boot ----------------
   async function boot() {
-    const err = new URLSearchParams(location.search).get('error');
-    if (err) {
-      const msgs = { denied: 'ألغيت تسجيل الدخول من Discord.', state: 'انتهت صلاحية طلب الدخول، جرّب مرة ثانية.', oauth: 'صار خطأ أثناء الربط مع Discord، جرّب مرة ثانية.', setup: 'التسجيل يفتح قريباً.' };
-      $('#login-error').textContent = msgs[err] || 'صار خطأ، جرّب مرة ثانية.';
-      $('#login-error').hidden = false;
-      history.replaceState(null, '', '/');
-    }
     try {
       info = await api('/api/me');
     } catch {
@@ -96,21 +87,11 @@
       toast('ما قدرنا نتصل بالسيرفر، حدّث الصفحة.', true);
       return;
     }
-    // Discord isn't connected on the server yet: keep the page, close the login
-    if (!info.loginOpen) {
-      const btn = $('#login-btn');
-      btn.classList.add('is-soon');
-      btn.removeAttribute('href');
-      btn.setAttribute('aria-disabled', 'true');
-      btn.querySelector('span').textContent = 'التسجيل يفتح قريباً';
-      $('#login-error').hidden = true;
-    }
     if (!info.user) return show('landing');
 
     $('#user-chip').hidden = false;
     $('#user-avatar').src = info.user.avatar;
     $('#user-name').textContent = info.user.name;
-    $('#admin-link').hidden = !info.user.isAdmin;
 
     if (info.status.state === 'in_progress') return startExam(true);
     renderDash();
@@ -145,46 +126,19 @@
         });
         break;
       }
-      case 'has_role':
+      case 'accepted':
         panel.innerHTML = `
           <div class="panel-icon ok">${ICONS.ok}</div>
-          <h3>حسابك مفعّل ✔</h3>
-          <p>عندك رتبة التفعيل في السيرفر، ما تحتاج تختبر مرة ثانية. نشوفك في المدينة!</p>
+          <h3>تم تفعيلك ✔</h3>
+          <p>الإدارة أعطتك الرتبة في Discord على يوزر <b dir="ltr">${esc(user.username)}</b>. نشوفك في المدينة!</p>
           <div class="panel-actions">${invite}</div>`;
         break;
       case 'pending_review':
         panel.innerHTML = `
           <div class="panel-icon warn">${ICONS.clock}</div>
           <h3>نجحت! 🎉 طلبك عند الإدارة</h3>
-          <p>نتيجتك وصلت للإدارة في Discord. أول ما يوافق أحد الإداريين توصلك الرتبة تلقائياً — ما تحتاج تسوي شي.</p>
-          <div class="panel-actions"><button class="btn btn-ghost" id="recheck">تحديث الحالة</button></div>`;
-        $('#recheck').addEventListener('click', refresh);
-        break;
-      case 'role_pending':
-        panel.innerHTML = `
-          <div class="panel-icon warn">${ICONS.alert}</div>
-          <h3>نجحت، بس الرتبة ما وصلت</h3>
-          <p>نجحت في الاختبار لكن صار خطأ أثناء إعطائك الرتبة. جرّب مرة ثانية، ولو ما ضبط تواصل مع الإدارة.</p>
-          <div class="panel-actions"><button class="btn btn-ok" id="retry-role">إعادة طلب الرتبة</button></div>`;
-        $('#retry-role').addEventListener('click', async (ev) => {
-          ev.currentTarget.disabled = true;
-          try {
-            await api('/api/role/retry', {});
-            toast('وصلتك الرتبة 🎉');
-            window.FX?.confetti();
-            await refresh();
-          } catch {
-            toast('ما ضبط، تواصل مع الإدارة.', true);
-            ev.currentTarget.disabled = false;
-          }
-        });
-        break;
-      case 'not_in_guild':
-        panel.innerHTML = `
-          <div class="panel-icon">${ICONS.users}</div>
-          <h3>لازم تكون داخل السيرفر</h3>
-          <p>عشان نقدر نعطيك الرتبة، ادخل سيرفر Justice Town في Discord أول، بعدين ارجع هنا.</p>
-          <div class="panel-actions">${invite}<button class="btn btn-ghost" id="recheck">دخلت، تحقق مرة ثانية</button></div>`;
+          <p>الإدارة بتعطيك الرتبة في Discord على يوزر <b dir="ltr">${esc(user.username)}</b>. تأكد إنك داخل السيرفر — ما تحتاج تسوي شي ثاني.</p>
+          <div class="panel-actions">${invite}<button class="btn btn-ghost" id="recheck">تحديث الحالة</button></div>`;
         $('#recheck').addEventListener('click', refresh);
         break;
       case 'cooldown': {
@@ -380,16 +334,13 @@
     $('#result-title').textContent = r.passed ? 'مبروك، نجحت! 🎉' : 'للأسف ما نجحت';
     $('#result-sub').textContent = !r.passed
       ? r.timedOut ? 'انتهى الوقت قبل ما تخلص.' : `تحتاج ${r.passPercent}% عشان تنجح. راجع القوانين وحاول مرة ثانية.`
-      : r.pending ? 'نتيجتك وصلت للإدارة في Discord. أول ما يوافقون توصلك الرتبة تلقائياً.'
-        : r.roleGranted ? 'تم تفعيل حسابك وأُعطيت رتبتك في Discord تلقائياً.' : 'نجحت، بس صار خطأ في إعطاء الرتبة — تواصل مع الإدارة.';
+      : 'نتيجتك وصلت للإدارة، وبيعطونك الرتبة في Discord على يوزرك. تأكد إنك داخل السيرفر.';
 
-    const roleChip = r.pending
-      ? '<span class="chip">⏳ بانتظار موافقة الإدارة</span>'
-      : `<span class="chip ${r.roleGranted ? 'ok' : 'bad'}">${r.roleGranted ? '✔ الرتبة وصلت' : '✖ الرتبة ما وصلت'}</span>`;
     $('#result-meta').innerHTML = [
       `<span class="chip">الإجابات الصحيحة: <b>${r.score}/${r.total}</b></span>`,
       `<span class="chip">المطلوب: <b>${r.passPercent}%</b></span>`,
-      r.passed ? roleChip : '',    ].join('');
+      r.passed ? '<span class="chip">⏳ بانتظار الإدارة</span>' : '',
+    ].join('');
 
     const invite = info.inviteUrl ? `<a class="btn btn-ok" href="${esc(info.inviteUrl)}" target="_blank" rel="noopener">افتح Discord</a>` : '';
     $('#result-actions').innerHTML = r.passed
@@ -473,6 +424,28 @@
     await api('/auth/logout', {}).catch(() => {});
     exam = null;
     location.href = '/';
+  });
+
+  $('#login-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const err = $('#login-error');
+    const username = $('#username').value.trim().replace(/^@/, '');
+    if (!/^[a-zA-Z0-9_.]{2,32}(#\d{4})?$/.test(username)) {
+      err.textContent = 'اليوزر غلط — حروف إنجليزية وأرقام و _ و . بس (بدون مسافات).';
+      err.hidden = false;
+      return;
+    }
+    err.hidden = true;
+    $('#login-btn').disabled = true;
+    try {
+      await api('/auth/login', { username });
+      await boot();
+    } catch {
+      err.textContent = 'ما قدرنا ندخلك، جرّب مرة ثانية.';
+      err.hidden = false;
+    } finally {
+      $('#login-btn').disabled = false;
+    }
   });
 
   boot();

@@ -52,6 +52,17 @@
 .d-granted.is-rejected { background: rgba(255, 95, 120, .08); border-color: rgba(255, 95, 120, .35); }
 .d-granted.is-pending { background: rgba(255, 194, 92, .08); border-color: rgba(255, 194, 92, .35); color: var(--warn); }
 .stat-v.warn { color: var(--warn); }
+
+.admin-login { max-width: 420px; margin: 40px auto 0; }
+.admin-login form { display: grid; gap: 8px; margin-top: 18px; }
+.admin-login label { font-size: 13px; color: var(--muted); margin-top: 6px; }
+.admin-login input {
+  padding: 13px 14px; border-radius: 12px; border: 1px solid var(--line-hi);
+  background: rgba(255, 255, 255, .04); color: var(--text); font: inherit; outline: none;
+}
+.admin-login input:focus { border-color: var(--brand); box-shadow: 0 0 0 4px rgba(91, 138, 230, .18); }
+.admin-login .btn { margin-top: 10px; }
+#admin-chip { padding: 4px 4px 4px 14px; }
 .d-history { margin: 0 0 14px; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--line); background: rgba(255, 255, 255, .02); }
 .d-history h4 { margin: 0 0 6px; font-size: 13px; color: var(--muted); font-weight: 500; }
 .d-history p { margin: 2px 0; font-size: 13px; }

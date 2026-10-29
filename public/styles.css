@@ -180,7 +180,17 @@ main { position: relative; z-index: 10; width: min(1080px, 100%); margin: 0 auto
 .hero-sub { margin: 22px 0 0; max-width: 520px; color: var(--muted); font-size: clamp(15px, 2.2vw, 17px); }
 .hero-sub strong { color: var(--brand-hi); font-weight: 600; }
 .login-error { margin: 16px 0 0; color: var(--bad); font-size: 14px; }
-.btn-discord.is-soon { opacity: .6; cursor: default; pointer-events: none; box-shadow: none; }
+.user-login { margin-top: 32px; width: min(460px, 100%); text-align: right; }
+.user-login label { display: block; margin-bottom: 8px; font-size: 14px; color: var(--muted); }
+.user-login-row { display: flex; gap: 10px; }
+.user-login-row input {
+  flex: 1; min-width: 0; padding: 15px 16px; border-radius: 16px; border: 1px solid var(--line-hi);
+  background: rgba(255, 255, 255, .04); color: var(--text); font: inherit; font-size: 16px; outline: none;
+  transition: border-color .25s, box-shadow .25s;
+}
+.user-login-row input:focus { border-color: var(--brand); box-shadow: 0 0 0 4px rgba(91, 138, 230, .18); }
+.user-login-row .btn-discord { margin-top: 0; padding: 15px 26px; }
+.user-login-hint { margin: 10px 0 0; font-size: 12px; color: var(--dim); }
 
 .steps { list-style: none; padding: 0; margin: 80px 0 0; display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
 .step { padding: 26px 24px 24px; }

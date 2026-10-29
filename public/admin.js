@@ -1,5 +1,6 @@
 /* =====================================================================
-   Admin dashboard — attempts list, stats, reset / grant actions.
+   Admin dashboard — password sign-in, attempts list, stats, and
+   accept / reject / reset actions recorded under the admin's name.
    ===================================================================== */
 (() => {
   const $ = (s, el = document) => el.querySelector(s);
@@ -30,23 +31,53 @@
     setTimeout(() => { el.classList.add('out'); setTimeout(() => el.remove(), 300); }, 3500);
   }
 
+  // ---------------- Sign in ----------------
+  function showLogin(disabled) {
+    $('#content').hidden = true;
+    $('#admin-chip').hidden = true;
+    $('#login').hidden = false;
+    $('#login-form').hidden = disabled;
+    $('#login-text').textContent = disabled
+      ? 'لوحة النتائج مقفلة. أضف ADMIN_PASSWORD في Environment على Render (أو ملف .env) عشان تفتحها.'
+      : 'اكتب اسمك (يبان في السجل عند كل قرار) وكلمة سر الإدارة.';
+  }
+
+  $('#login-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const err = $('#login-error');
+    err.hidden = true;
+    const btn = e.submitter || $('#login-form button');
+    btn.disabled = true;
+    try {
+      await api('/api/admin/login', { name: $('#admin-name').value.trim(), password: $('#admin-pass').value });
+      $('#admin-pass').value = '';
+      await load();
+    } catch (ex) {
+      err.textContent = { wrong_password: 'كلمة السر غلط.', name_required: 'اكتب اسمك.', rate_limited: 'محاولات كثيرة، انتظر دقيقة.' }[ex.message] || 'ما قدرنا ندخلك.';
+      err.hidden = false;
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  $('#admin-logout').addEventListener('click', async () => {
+    await api('/api/admin/logout', {}).catch(() => {});
+    showLogin(false);
+  });
+
+  // ---------------- Data ----------------
   async function load() {
     try {
       data = await api('/api/admin/attempts');
     } catch (e) {
-      $('#content').hidden = true;
-      $('#denied').hidden = false;
-      if (e.status === 401) {
-        $('#denied-text').textContent = 'سجّل دخولك بحساب Discord اللي آيديه موجود في ADMIN_IDS.';
-        $('#denied-actions').innerHTML = '<a class="btn btn-primary" href="/auth/login">تسجيل الدخول</a>';
-      } else {
-        $('#denied-text').textContent = 'حسابك مو مضاف كإداري. أضف آيدي حسابك في ADMIN_IDS داخل ملف .env وأعد تشغيل الموقع.';
-        $('#denied-actions').innerHTML = '';
-      }
+      if (e.status === 401) return showLogin(e.message === 'admin_disabled');
+      toast('ما قدرنا نجيب النتائج.', true);
       return;
     }
-    $('#denied').hidden = true;
+    $('#login').hidden = true;
     $('#content').hidden = false;
+    $('#admin-chip').hidden = false;
+    $('#admin-who').textContent = data.admin;
     renderStats();
     renderRows();
     renderHardest();
@@ -55,6 +86,8 @@
     if (hash) openAttempt(hash);
   }
 
+  const isPending = (a) => a.passed && a.decision === 'pending';
+
   function renderStats() {
     const s = data.stats;
     const cards = [
@@ -62,7 +95,7 @@
       ['ناجح', s.passed, 'ok'],
       ['راسب', s.failed, 'bad'],
       ['نسبة النجاح', `${s.passRate}<small>%</small>`, ''],
-      ['بانتظار قرار الإدارة', data.attempts.filter(isPending).length, 'warn'],
+      ['بانتظار الرتبة', data.attempts.filter(isPending).length, 'warn'],
       ['يختبرون الحين', s.inProgress, ''],
     ];
     $('#stats').innerHTML = cards.map(([k, v, c]) => `<div class="glass stat"><span class="stat-k">${k}</span><span class="stat-v ${c}">${v}</span></div>`).join('');
@@ -73,38 +106,28 @@
     return data.attempts.filter((a) => {
       if (filter === 'pass' && !a.passed) return false;
       if (filter === 'fail' && a.passed) return false;
-      if (filter === 'role' && !(a.passed && !a.roleGranted)) return false;
       if (filter === 'pending' && !isPending(a)) return false;
-      if (q && !`${a.name} ${a.username} ${a.userId} ${a.decidedBy ? `${a.decidedBy.name} ${a.decidedBy.username}` : ''}`.toLowerCase().includes(q)) return false;
+      if (q && !`${a.username} ${a.decidedBy?.name || ''}`.toLowerCase().includes(q)) return false;
       return true;
     });
   }
 
-  function isPending(a) {
-    return a.passed && (a.decision === 'pending' || a.decision === 'processing');
-  }
-
-  // Who decided: the admin who clicked Accept/Reject in Discord, or "تلقائي" in auto mode
+  // Who decided: the admin who marked it in this dashboard
   function badge(a) {
     if (!a.passed) return `<span class="badge bad">${a.timedOut ? 'انتهى الوقت' : 'راسب'}</span>`;
-    if (isPending(a)) return '<span class="badge warn">⏳ بانتظار قرار الإدارة</span>';
+    if (isPending(a)) return '<span class="badge warn">⏳ بانتظار الرتبة</span>';
     if (a.decision === 'rejected') return `<span class="badge bad">❌ رفضه: ${esc(a.decidedBy?.name || 'إداري')}</span>`;
-    if (a.decision === 'accepted') return `<span class="badge staff">✅ قبله: ${esc(a.decidedBy?.name || 'إداري')}</span>`;
-    return a.roleGranted ? '<span class="badge ok">ناجح · تفعيل تلقائي</span>' : '<span class="badge warn">ناجح · الرتبة فشلت</span>';
+    return `<span class="badge staff">✅ فعّله: ${esc(a.decidedBy?.name || 'إداري')}</span>`;
   }
 
-  const ACTIONS = { accept: '✅ قبل', reject: '❌ رفض', reset: '🔁 فتح محاولات لـ' };
-  function playerName(userId) {
-    const a = data.attempts.find((x) => x.userId === userId);
-    return a ? a.name : userId;
-  }
+  const ACTIONS = { accept: '✅ فعّل', reject: '❌ رفض', reset: '🔁 فتح محاولات لـ' };
 
   function renderAdminLog() {
     const log = data.adminLog.slice(0, 12);
     $('#admin-log').innerHTML = log.length
       ? log.map((l) => `
         <div class="log-item">
-          <p><b>${esc(l.by.name)}</b> ${ACTIONS[l.action] || l.action} <b>${esc(playerName(l.userId))}</b></p>
+          <p><b>${esc(l.by.name)}</b> ${ACTIONS[l.action] || l.action} <b dir="ltr">${esc(l.username || l.userId)}</b></p>
           <small><bdi>${fmtDate(l.at)}</bdi></small>
         </div>`).join('')
       : '<p class="muted">ما فيه إجراءات لين الحين.</p>';
@@ -116,7 +139,7 @@
       ? list.map((a, i) => `
         <button class="row" data-id="${esc(a.id)}" style="--i:${Math.min(i, 20)}">
           <img src="${esc(a.avatar)}" alt="" loading="lazy">
-          <span class="row-name"><b>${esc(a.name)}</b><span><bdi>@${esc(a.username)}</bdi> · <bdi>${fmtDate(a.submittedAt)}</bdi> · محاولة ${a.attemptNo}</span></span>
+          <span class="row-name"><b dir="ltr">${esc(a.username)}</b><span><bdi>${fmtDate(a.submittedAt)}</bdi> · محاولة ${a.attemptNo}</span></span>
           ${badge(a)}
           <span class="row-score" style="color:${a.passed ? 'var(--ok)' : 'var(--bad)'}">${a.percent}%</span>
         </button>`).join('')
@@ -146,13 +169,18 @@
       </div>`).join('');
     const actionHistory = data.adminLog
       .filter((l) => l.userId === a.userId)
-      .map((l) => `<p>${{ accept: '✅ قبول', reject: '❌ رفض', reset: '🔁 فتح محاولات جديدة' }[l.action] || l.action} — بواسطة <b>${esc(l.by.name)}</b> · <bdi>${fmtDate(l.at)}</bdi></p>`)
+      .map((l) => `<p>${{ accept: '✅ تفعيل', reject: '❌ رفض', reset: '🔁 فتح محاولات جديدة' }[l.action] || l.action} — بواسطة <b>${esc(l.by.name)}</b> · <bdi>${fmtDate(l.at)}</bdi></p>`)
       .join('');
+
+    const decideButtons = isPending(a)
+      ? `<button class="btn btn-ok" data-act="accept" data-id="${esc(a.id)}">✅ أعطيته الرتبة في الدسكورد</button>
+         <button class="btn btn-ghost" data-act="reject" data-id="${esc(a.id)}">❌ رفض</button>`
+      : '';
 
     $('#drawer-body').innerHTML = `
       <div class="d-head">
         <img src="${esc(a.avatar)}" alt="">
-        <div><h3>${esc(a.name)}</h3><p>@${esc(a.username)} · ${esc(a.userId)}</p></div>
+        <div><h3 dir="ltr">${esc(a.username)}</h3><p>يوزر الدسكورد — انسخه ودوّره في السيرفر</p></div>
       </div>
       <div class="d-meta">
         ${badge(a)}
@@ -162,13 +190,13 @@
         ${a.focusLost == null ? '' : `<span class="chip ${a.focusLost >= 3 ? 'bad' : ''}">طلع من الصفحة: ${a.focusLost} مرة</span>`}
         <span class="chip">${fmtDate(a.submittedAt)}</span>
       </div>
-      ${a.decidedBy ? `<p class="d-granted ${a.decision === 'rejected' ? 'is-rejected' : ''}">${a.decision === 'rejected' ? '❌ رفضه' : '✅ قبله'} الإداري <b>${esc(a.decidedBy.name)}</b> <bdi>(@${esc(a.decidedBy.username)})</bdi> من Discord · <bdi>${fmtDate(a.decidedBy.at)}</bdi></p>` : ''}
-      ${isPending(a) ? '<p class="d-granted is-pending">⏳ بانتظار قرار الإدارة — القبول والرفض من رسالته في روم النتائج بالدسكورد</p>' : ''}
+      ${a.decidedBy ? `<p class="d-granted ${a.decision === 'rejected' ? 'is-rejected' : ''}">${a.decision === 'rejected' ? '❌ رفضه' : '✅ فعّله'} الإداري <b>${esc(a.decidedBy.name)}</b> · <bdi>${fmtDate(a.decidedBy.at)}</bdi></p>` : ''}
+      ${isPending(a) ? '<p class="d-granted is-pending">⏳ نجح — أعطه الرتبة في الدسكورد بيدك، وبعدها اضغط الزر الأخضر تحت عشان ينسجل باسمك.</p>' : ''}
       ${actionHistory ? `<div class="d-history"><h4>إجراءات الإدارة على هذا اللاعب</h4>${actionHistory}</div>` : ''}
-      ${a.roleError ? `<p class="bad" style="color:var(--bad);margin:0 0 14px">سبب فشل الرتبة: ${esc(a.roleError)}</p>` : ''}
       ${questions}
       <div class="d-actions">
-        <button class="btn btn-ghost" data-act="reset" data-user="${esc(a.userId)}">فتح محاولات جديدة لهذا اللاعب</button>
+        ${decideButtons}
+        <button class="btn btn-ghost" data-act="reset" data-user="${esc(a.userId)}">🔁 فتح محاولات جديدة</button>
       </div>`;
     $('#drawer').hidden = false;
   }
@@ -191,17 +219,22 @@
     }
 
     const act = e.target.closest('[data-act]');
-    if (act) {
-      act.disabled = true;
-      try {
+    if (!act) return;
+    act.disabled = true;
+    try {
+      if (act.dataset.act === 'reset') {
         await api('/api/admin/reset', { userId: act.dataset.user });
         toast('تم تصفير محاولات اللاعب — يقدر يختبر من جديد.');
-        closeDrawer();
-        load();
-      } catch (err) {
-        toast(err.data?.error || 'العملية فشلت', true);
-        act.disabled = false;
+      } else {
+        await api('/api/admin/decide', { attemptId: act.dataset.id, action: act.dataset.act });
+        toast(act.dataset.act === 'accept' ? 'انسجل التفعيل باسمك ✔' : 'تم الرفض.');
       }
+      closeDrawer();
+      load();
+    } catch (err) {
+      if (err.message === 'already_decided') toast(`قرر فيه ${err.data.by || 'إداري ثاني'} قبلك.`, true);
+      else toast('العملية فشلت', true);
+      act.disabled = false;
     }
   });
 
@@ -210,5 +243,5 @@
   $('#reload').addEventListener('click', () => { load(); toast('تم التحديث'); });
 
   load();
-  setInterval(() => { if ($('#drawer').hidden) load(); }, 30000);
+  setInterval(() => { if ($('#drawer').hidden && !$('#content').hidden) load(); }, 30000);
 })();

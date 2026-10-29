@@ -1,9 +1,9 @@
 // =====================================================================
 //  Justice Town — Roleplay Activation Exam
-//  Discord OAuth2 login → timed exam → server-side grading →
-//  result posted to a Discord channel with Accept / Reject buttons →
-//  the admin who clicks decides, the role is granted, and the dashboard
-//  records who decided.
+//  The player types their Discord username → timed exam → server-side
+//  grading → result in the admin dashboard (and optionally a Discord
+//  channel via webhook). Admins sign in with a password, give the role
+//  by hand in Discord, and mark it accepted/rejected here under their name.
 // =====================================================================
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '.env') });
@@ -18,50 +18,24 @@ const PORT = Number(env('PORT', '3000')) || 3000;
 const BASE_URL = (env('BASE_URL') || env('RENDER_EXTERNAL_URL') || `http://localhost:${PORT}`).replace(/\/+$/, '');
 const SECURE_COOKIES = BASE_URL.startsWith('https://');
 
-const CLIENT_ID = env('DISCORD_CLIENT_ID');
-const CLIENT_SECRET = env('DISCORD_CLIENT_SECRET');
-const BOT_TOKEN = env('DISCORD_BOT_TOKEN');
-const GUILD_ID = env('DISCORD_GUILD_ID');
-const ROLE_ID = env('DISCORD_ROLE_ID');
-const REMOVE_ROLE_ID = env('DISCORD_REMOVE_ROLE_ID');
-const LOG_CHANNEL_ID = env('DISCORD_LOG_CHANNEL_ID');
 const INVITE_URL = env('DISCORD_INVITE_URL');
-const PUBLIC_KEY = env('DISCORD_PUBLIC_KEY');
-const REDIRECT_URI = `${BASE_URL}/auth/callback`;
+const WEBHOOK_URL = env('DISCORD_WEBHOOK_URL');
+const ADMIN_PASSWORD = env('ADMIN_PASSWORD');
 
-const ADMIN_IDS = new Set(env('ADMIN_IDS').split(',').map((s) => s.trim()).filter(Boolean));
-
-const missing = [
-  'DISCORD_CLIENT_ID', 'DISCORD_CLIENT_SECRET', 'DISCORD_BOT_TOKEN', 'DISCORD_PUBLIC_KEY',
-  'DISCORD_GUILD_ID', 'DISCORD_ROLE_ID', 'DISCORD_LOG_CHANNEL_ID', 'SESSION_SECRET',
-].filter((k) => !env(k));
-// Without the Discord keys the site still runs (pages load, login shows "opening soon"),
-// so it can be published first and connected to Discord later without code changes.
-const DISCORD_READY = missing.length === 0;
-if (!DISCORD_READY) {
-  console.warn(`⚠ الموقع شغّال بدون Discord — تسجيل الدخول مقفل لين تضيف: ${missing.join(', ')}`);
-}
-// With no secret yet there are no logins to protect, so a per-boot random one is fine
-const SESSION_SECRET = env('SESSION_SECRET') || crypto.randomBytes(32).toString('hex');
-if (SESSION_SECRET.length < 24) {
-  console.error('✖ SESSION_SECRET قصير جداً (لازم 24 حرف على الأقل)');
+if (WEBHOOK_URL && !/^https:\/\/(discord|discordapp)\.com\/api\/webhooks\/\d+\/[\w-]+$/.test(WEBHOOK_URL)) {
+  console.error('✖ DISCORD_WEBHOOK_URL غلط — انسخه من إعدادات الروم ← Integrations ← Webhooks ← Copy Webhook URL');
   process.exit(1);
 }
-if (DISCORD_READY && !ADMIN_IDS.size) console.warn('⚠ ADMIN_IDS فاضي — ما أحد يقدر يدخل لوحة النتائج /admin');
-const isAdmin = (id) => ADMIN_IDS.has(id);
-
-// Ed25519 key Discord signs button clicks with (General Information → Public Key)
-let interactionKey = null;
-if (PUBLIC_KEY) {
-  try {
-    const raw = Buffer.from(PUBLIC_KEY, 'hex');
-    if (raw.length !== 32) throw new Error('length');
-    interactionKey = crypto.createPublicKey({ key: Buffer.concat([Buffer.from('302a300506032b6570032100', 'hex'), raw]), format: 'der', type: 'spki' });
-  } catch {
-    console.error('✖ DISCORD_PUBLIC_KEY غلط — انسخه من General Information في Discord Developer Portal');
-    process.exit(1);
-  }
+if (!ADMIN_PASSWORD) console.warn('⚠ ADMIN_PASSWORD فاضي — لوحة النتائج /admin مقفلة لين تحطه');
+else if (ADMIN_PASSWORD.length < 8) {
+  console.error('✖ ADMIN_PASSWORD قصير — لازم 8 أحرف على الأقل');
+  process.exit(1);
 }
+if (!WEBHOOK_URL) console.warn('⚠ DISCORD_WEBHOOK_URL فاضي — النتائج بتظهر في لوحة النتائج بس، ما توصل الدسكورد');
+
+// Without a fixed secret, logins reset whenever the site restarts (works, but set one)
+const SESSION_SECRET = env('SESSION_SECRET') || crypto.randomBytes(32).toString('hex');
+if (!env('SESSION_SECRET')) console.warn('⚠ SESSION_SECRET فاضي — الجلسات بتنمسح كل ما يعيد الموقع تشغيله');
 
 // ---------------------------------------------------------------------
 //  Exam config (config/questions.json) — re-read whenever the file changes
@@ -73,12 +47,10 @@ const DEFAULT_SETTINGS = {
   questionCount: 10,
   timeLimitMinutes: 10,
   cooldownMinutes: 60,
-  maxAttempts: 3,
+  maxAttempts: 0,
   shuffleQuestions: true,
   shuffleOptions: true,
   showReview: false,
-  // false = an admin accepts/rejects from Discord; true = passing grants the role at once
-  autoGrant: false,
 };
 let configCache = { mtime: 0, data: null };
 
@@ -124,15 +96,13 @@ function loadConfig() {
 // ---------------------------------------------------------------------
 const DATA_DIR = env('DATA_DIR') ? path.resolve(env('DATA_DIR')) : path.join(__dirname, 'data');
 const STORE_FILE = path.join(DATA_DIR, 'store.json');
-// adminLog: who did what from the dashboard ({ action: 'grant' | 'reset', userId, by, at })
+// adminLog: who did what from the dashboard ({ action: 'accept' | 'reject' | 'reset', userId, by, at })
 let store = { attempts: [], active: {}, resets: {}, adminLog: [] };
 
 function loadStore() {
   fs.mkdirSync(DATA_DIR, { recursive: true });
   if (fs.existsSync(STORE_FILE)) {
     store = { ...store, ...JSON.parse(fs.readFileSync(STORE_FILE, 'utf8')) };
-    // a decision cut off by a restart goes back to waiting for an admin
-    for (const a of store.attempts) if (a.decision === 'processing') a.decision = 'pending';
   }
 }
 function saveStore() {
@@ -145,7 +115,6 @@ function saveStore() {
 //  Helpers
 // ---------------------------------------------------------------------
 const now = () => Date.now();
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const randomId = () => crypto.randomBytes(12).toString('hex');
 
 function shuffle(arr) {
@@ -193,10 +162,17 @@ function setCookie(res, name, value, maxAgeSec) {
   );
 }
 
-function avatarUrl(user) {
-  if (user.avatar) return `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.png?size=128`;
-  const idx = Number((BigInt(user.id) >> 22n) % 6n);
-  return `https://cdn.discordapp.com/embed/avatars/${idx}.png`;
+// Discord usernames: 2–32 of a-z 0-9 _ . (old-style "name#1234" also accepted)
+function cleanUsername(input) {
+  const u = String(input || '').trim().replace(/^@/, '').toLowerCase();
+  return /^[a-z0-9_.]{2,32}(#\d{4})?$/.test(u) ? u : null;
+}
+const userIdFor = (username) => `u_${username}`;
+
+// Discord's default avatars, picked from the username so it stays the same
+function avatarUrl(username) {
+  const n = crypto.createHash('md5').update(username).digest()[0] % 6;
+  return `https://cdn.discordapp.com/embed/avatars/${n}.png`;
 }
 
 function formatDuration(sec) {
@@ -205,126 +181,65 @@ function formatDuration(sec) {
   return m ? `${m} د ${s} ث` : `${s} ث`;
 }
 
+// Constant-time password check
+function passwordOk(input) {
+  if (!ADMIN_PASSWORD || typeof input !== 'string') return false;
+  const a = crypto.createHash('sha256').update(input).digest();
+  const b = crypto.createHash('sha256').update(ADMIN_PASSWORD).digest();
+  return crypto.timingSafeEqual(a, b);
+}
+
 // ---------------------------------------------------------------------
-//  Discord API
+//  Discord webhook (optional — just posts messages to one channel)
 // ---------------------------------------------------------------------
-const API = 'https://discord.com/api/v10';
-
-async function discord(method, route, { body, auth = `Bot ${BOT_TOKEN}`, reason } = {}) {
-  const headers = { Authorization: auth, 'User-Agent': `DiscordBot (${BASE_URL}, 1.0)` };
-  if (body) headers['Content-Type'] = 'application/json';
-  if (reason) headers['X-Audit-Log-Reason'] = encodeURIComponent(reason);
-  for (let attempt = 0; attempt < 3; attempt++) {
-    const res = await fetch(API + route, { method, headers, body: body ? JSON.stringify(body) : undefined });
-    if (res.status === 429) {
-      const info = await res.json().catch(() => ({}));
-      await sleep((info.retry_after || 1) * 1000 + 150);
-      continue;
-    }
-    const text = await res.text();
-    let data = null;
-    try { data = text ? JSON.parse(text) : null; } catch { data = text; }
-    return { ok: res.ok, status: res.status, data };
-  }
-  return { ok: false, status: 429, data: null };
-}
-
-async function getMember(userId) {
-  const r = await discord('GET', `/guilds/${GUILD_ID}/members/${userId}`);
-  if (r.status === 404) return { inGuild: false, roles: [] };
-  if (!r.ok) throw new Error(`Discord member lookup failed (${r.status})`);
-  return { inGuild: true, roles: r.data.roles || [] };
-}
-
-// `by` is the admin who granted it by hand; omitted for the automatic grant on passing
-async function grantRole(userId, by = null) {
-  const reason = by ? `Justice Town — تفعيل يدوي بواسطة ${by.username} (${by.id})` : 'Justice Town — نجح في اختبار التفعيل';
-  const r = await discord('PUT', `/guilds/${GUILD_ID}/members/${userId}/roles/${ROLE_ID}`, { reason });
-  if (!r.ok) {
-    const error =
-      r.status === 403
-        ? 'البوت ما عنده صلاحية Manage Roles أو رتبته أقل من رتبة التفعيل'
-        : r.status === 404
-          ? 'اللاعب طلع من السيرفر أو الرتبة غير موجودة'
-          : `خطأ من Discord (${r.status})`;
-    console.error(`✖ منح الرتبة فشل للاعب ${userId}:`, r.status, r.data);
-    return { ok: false, error };
-  }
-  if (REMOVE_ROLE_ID) {
-    const d = await discord('DELETE', `/guilds/${GUILD_ID}/members/${userId}/roles/${REMOVE_ROLE_ID}`, { reason });
-    if (!d.ok) console.warn(`⚠ ما قدرت أشيل الرتبة القديمة من ${userId} (${d.status})`);
-  }
-  return { ok: true };
-}
-
-async function postLog(embed, components = []) {
-  const r = await discord('POST', `/channels/${LOG_CHANNEL_ID}/messages`, {
-    body: { embeds: [embed], components, allowed_mentions: { parse: [] } },
+async function postWebhook(embed) {
+  if (!WEBHOOK_URL) return;
+  const res = await fetch(`${WEBHOOK_URL}?wait=false`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username: 'Justice Town', embeds: [embed], allowed_mentions: { parse: [] } }),
   });
-  if (!r.ok) console.error('✖ إرسال الرسالة لروم اللوق فشل:', r.status, r.data);
+  if (!res.ok) console.error('✖ إرسال الرسالة للدسكورد فشل:', res.status, await res.text().catch(() => ''));
 }
 
-// Reopening attempts from the dashboard is also put on record in Discord
-function sendResetLog(userId, admin) {
-  return postLog({
-    title: '🔁 فتح محاولات جديدة',
-    color: 0xffc25c,
-    fields: [
-      { name: 'اللاعب', value: `<@${userId}>`, inline: true },
-      { name: 'الإداري', value: `<@${admin.id}>\n\`${admin.username}\``, inline: true },
-    ],
-    footer: { text: 'Justice Town • نظام التفعيل' },
-    timestamp: new Date().toISOString(),
-  });
-}
-
-const DECISION_TEXT = {
-  pending: '⏳ بانتظار قرار الإدارة',
-  auto: '✔ انعطت تلقائياً',
-};
-
-// Accept / Reject buttons; the custom_id carries the player id so a click still works
-// even if the stored attempt is gone (e.g. the free host wiped its disk)
-function decisionButtons(attempt) {
-  return [{
-    type: 1,
-    components: [
-      { type: 2, style: 3, label: 'قبول وإعطاء الرتبة', emoji: { name: '✅' }, custom_id: `jt:accept:${attempt.id}:${attempt.userId}` },
-      { type: 2, style: 4, label: 'رفض', emoji: { name: '✖️' }, custom_id: `jt:reject:${attempt.id}:${attempt.userId}` },
-    ],
-  }];
-}
-
-async function sendLog(attempt) {
+function sendResultLog(attempt) {
   const wrong = attempt.answers.filter((a) => !a.isCorrect);
   let details = wrong
     .map((a) => `• **${a.question}**\n  ↳ جاوب: ${a.chosen === null ? '— لم يجاوب —' : a.options[a.chosen]}`)
     .join('\n');
   if (details.length > 3000) details = `${details.slice(0, 3000)}\n…`;
-  const embed = {
-    title: !attempt.passed ? '❌ رسوب في اختبار التفعيل' : attempt.decision === 'pending' ? '📝 نجح — بانتظار قرار الإدارة' : '✅ نجاح في اختبار التفعيل',
-    color: !attempt.passed ? 0xff5d6c : attempt.decision === 'pending' ? 0xffc25c : 0x3ecf8e,
-    thumbnail: { url: attempt.avatar },
+  return postWebhook({
+    title: attempt.passed ? '📝 نجح — بانتظار إعطاء الرتبة' : '❌ رسوب في اختبار التفعيل',
+    color: attempt.passed ? 0xffc25c : 0xff5d6c,
     description: [
       wrong.length ? `**الأخطاء (${wrong.length}):**\n${details}` : '**جاوب على كل الأسئلة صح** 🎯',
-      `\n[عرض التفاصيل في لوحة النتائج](${BASE_URL}/admin#${attempt.id})`,
+      attempt.passed ? `\nأعطه الرتبة في الدسكورد، وبعدها اضغط "تم" في [لوحة النتائج](${BASE_URL}/admin#${attempt.id})` : '',
     ].join('\n'),
     fields: [
-      { name: 'اللاعب', value: `<@${attempt.userId}>\n\`${attempt.username}\``, inline: true },
+      { name: 'يوزر الدسكورد', value: `\`${attempt.username}\``, inline: true },
       { name: 'النتيجة', value: `**${attempt.score}/${attempt.total}** (${attempt.percent}%)`, inline: true },
       { name: 'المدة', value: formatDuration(attempt.durationSec) + (attempt.timedOut ? ' ⏰' : ''), inline: true },
       { name: 'رقم المحاولة', value: String(attempt.attemptNo), inline: true },
       { name: 'طلع من الصفحة', value: attempt.focusLost == null ? '—' : `${attempt.focusLost} مرة${attempt.focusLost >= 3 ? ' ⚠' : ''}`, inline: true },
-      {
-        name: 'الرتبة',
-        value: !attempt.passed ? '—' : attempt.roleError ? `✖ فشل: ${attempt.roleError}` : DECISION_TEXT[attempt.decision] || '—',
-        inline: true,
-      },
     ],
     footer: { text: 'Justice Town • نظام التفعيل' },
     timestamp: new Date(attempt.submittedAt).toISOString(),
-  };
-  await postLog(embed, attempt.decision === 'pending' ? decisionButtons(attempt) : []);
+  });
+}
+
+function sendAdminLog(action, username, adminName) {
+  const titles = { accept: '✅ تم إعطاء الرتبة', reject: '❌ تم الرفض', reset: '🔁 فتح محاولات جديدة' };
+  const colors = { accept: 0x3ecf8e, reject: 0xff5d6c, reset: 0x5b8ae6 };
+  return postWebhook({
+    title: titles[action],
+    color: colors[action],
+    fields: [
+      { name: 'اللاعب', value: `\`${username}\``, inline: true },
+      { name: 'الإداري', value: adminName, inline: true },
+    ],
+    footer: { text: 'Justice Town • نظام التفعيل' },
+    timestamp: new Date().toISOString(),
+  });
 }
 
 // ---------------------------------------------------------------------
@@ -348,12 +263,13 @@ function gradeAndRecord(user, active, answers, { timedOut = false } = {}) {
   const total = graded.length;
   const percent = total ? Math.round((score / total) * 100) : 0;
   const submittedAt = now();
+  const passed = percent >= settings.passPercent;
   const attempt = {
     id: randomId(),
     userId: user.id,
     username: user.username,
-    name: user.name,
-    avatar: avatarUrl(user),
+    name: user.username,
+    avatar: avatarUrl(user.username),
     startedAt: active.startedAt,
     submittedAt,
     durationSec: Math.max(0, Math.round((submittedAt - active.startedAt) / 1000)),
@@ -361,11 +277,12 @@ function gradeAndRecord(user, active, answers, { timedOut = false } = {}) {
     total,
     percent,
     passPercent: settings.passPercent,
-    passed: percent >= settings.passPercent,
+    passed,
+    // a pass waits for an admin to give the role in Discord and mark it here
+    decision: passed ? 'pending' : null,
+    decidedBy: null,
     timedOut,
     attemptNo: userAttempts(user.id).length + 1,
-    roleGranted: false,
-    roleError: null,
     answers: graded,
   };
   delete store.active[user.id];
@@ -379,15 +296,13 @@ function expireActive(user) {
     const attempt = gradeAndRecord(user, active, null, { timedOut: true });
     store.attempts.push(attempt);
     saveStore();
-    sendLog(attempt).catch((e) => console.error(e));
+    sendResultLog(attempt).catch((e) => console.error(e));
   }
 }
 
-async function userStatus(user) {
+function userStatus(user) {
   const { settings } = loadConfig();
   expireActive(user);
-  const member = await getMember(user.id);
-  const hasRole = member.inGuild && member.roles.includes(ROLE_ID);
   const attempts = userAttempts(user.id);
   const last = attempts[attempts.length - 1] || null;
   // a rejected pass counts like a failed attempt
@@ -398,10 +313,8 @@ async function userStatus(user) {
   if (cooldownUntil <= now()) cooldownUntil = 0;
 
   let state = 'ready';
-  if (!member.inGuild) state = 'not_in_guild';
-  else if (hasRole) state = 'has_role';
-  else if (passedAttempt && ['pending', 'processing'].includes(passedAttempt.decision)) state = 'pending_review';
-  else if (passedAttempt) state = 'role_pending';
+  if (passedAttempt && passedAttempt.decision === 'accepted') state = 'accepted';
+  else if (passedAttempt) state = 'pending_review';
   else if (store.active[user.id]) state = 'in_progress';
   else if (attemptsLeft === 0) state = 'no_attempts';
   else if (cooldownUntil) state = 'cooldown';
@@ -437,116 +350,6 @@ function examPayload(active) {
 const app = express();
 app.set('trust proxy', 1);
 app.disable('x-powered-by');
-
-// ----- Discord buttons (Interactions Endpoint URL) -----
-// Registered before the JSON parser: the signature check needs the raw body.
-const PERM_ADMINISTRATOR = 1n << 3n;
-const PERM_MANAGE_ROLES = 1n << 28n;
-const ephemeral = (content) => ({ type: 4, data: { content, flags: 64 } });
-
-function verifyInteraction(req) {
-  const sig = req.get('x-signature-ed25519');
-  const ts = req.get('x-signature-timestamp');
-  if (!sig || !ts || !Buffer.isBuffer(req.body)) return false;
-  try {
-    return crypto.verify(null, Buffer.concat([Buffer.from(ts), req.body]), interactionKey, Buffer.from(sig, 'hex'));
-  } catch {
-    return false;
-  }
-}
-
-// Who may click Accept/Reject: anyone in ADMIN_IDS, or with Manage Roles / Administrator in the server
-function canDecide(member) {
-  if (!member?.user) return false;
-  if (ADMIN_IDS.has(member.user.id)) return true;
-  const perms = BigInt(member.permissions || '0');
-  return (perms & (PERM_ADMINISTRATOR | PERM_MANAGE_ROLES)) !== 0n;
-}
-
-// Rebuild the embed with the decision (sending back Discord's own embed object can be rejected)
-function decidedEmbed(old, accepted, by, error) {
-  const value = error ? `✖ فشل إعطاء الرتبة: ${error}` : accepted ? `✅ قبله <@${by.id}>` : `❌ رفضه <@${by.id}>`;
-  const fields = (old.fields || []).map((f) => (f.name === 'الرتبة' ? { name: f.name, value: accepted && !error ? '✔ انعطت' : '—', inline: true } : { name: f.name, value: f.value, inline: f.inline }));
-  fields.push({ name: 'القرار', value, inline: false });
-  return {
-    title: error ? '⚠ قبول — بس الرتبة ما انعطت' : accepted ? '✅ تم القبول' : '❌ تم الرفض',
-    color: error ? 0xffc25c : accepted ? 0x3ecf8e : 0xff5d6c,
-    description: old.description,
-    thumbnail: old.thumbnail?.url ? { url: old.thumbnail.url } : undefined,
-    fields,
-    footer: { text: 'Justice Town • نظام التفعيل' },
-    timestamp: new Date().toISOString(),
-  };
-}
-
-async function handleDecision(i, action, attemptId, userId, by) {
-  const accepted = action === 'accept';
-  const attempt = store.attempts.find((a) => a.id === attemptId);
-  let error = null;
-  if (accepted) {
-    const r = await grantRole(userId, by).catch((e) => ({ ok: false, error: e.message }));
-    if (!r.ok) error = r.error;
-  }
-  if (attempt) {
-    attempt.decision = error ? 'pending' : accepted ? 'accepted' : 'rejected';
-    attempt.decidedBy = error ? null : { ...by, at: now() };
-    attempt.roleGranted = accepted && !error;
-    attempt.roleError = error;
-  }
-  if (!error) store.adminLog.push({ action, userId, by, at: now() });
-  saveStore();
-
-  const old = i.message?.embeds?.[0] || {};
-  const edit = await discord('PATCH', `/webhooks/${i.application_id}/${i.token}/messages/@original`, {
-    body: {
-      embeds: [decidedEmbed(old, accepted, by, error)],
-      // keep the buttons if the grant failed so it can be retried
-      components: error ? i.message.components : [],
-      allowed_mentions: { parse: [] },
-    },
-  });
-  if (!edit.ok) console.error('✖ تعديل رسالة القرار فشل:', edit.status, edit.data);
-  if (error) {
-    await discord('POST', `/webhooks/${i.application_id}/${i.token}`, {
-      body: { content: `⚠ ما قدرت أعطي الرتبة: ${error}`, flags: 64 },
-    });
-  }
-}
-
-app.post(
-  '/discord/interactions',
-  express.raw({ type: '*/*', limit: '64kb' }),
-  (req, res) => {
-    if (!interactionKey || !DISCORD_READY) return res.status(503).send('discord not configured');
-    if (!verifyInteraction(req)) return res.status(401).send('invalid request signature');
-    let i;
-    try { i = JSON.parse(req.body.toString('utf8')); } catch { return res.status(400).end(); }
-    if (i.type === 1) return res.json({ type: 1 }); // PING when you save the URL in the portal
-    if (i.type !== 3) return res.status(400).end();
-
-    const [ns, action, attemptId, userId] = String(i.data?.custom_id || '').split(':');
-    if (ns !== 'jt' || !['accept', 'reject'].includes(action) || !/^\d{5,25}$/.test(userId || '')) {
-      return res.json(ephemeral('زر غير معروف.'));
-    }
-    if (!canDecide(i.member)) return res.json(ephemeral('⛔ ما عندك صلاحية تقبل أو ترفض.'));
-
-    const attempt = store.attempts.find((a) => a.id === attemptId);
-    if (attempt && ['accepted', 'rejected', 'processing'].includes(attempt.decision)) {
-      return res.json(ephemeral(attempt.decision === 'processing' ? 'جاري التنفيذ…' : `تم البت فيه من قبل بواسطة ${attempt.decidedBy?.name || 'إداري'}.`));
-    }
-    if (attempt) attempt.decision = 'processing'; // blocks a double click while we work
-
-    const u = i.member.user;
-    const by = { id: u.id, username: u.username, name: i.member.nick || u.global_name || u.username };
-    // Acknowledge within Discord's 3 seconds, then do the work and edit the message
-    res.json({ type: 6 });
-    handleDecision(i, action, attemptId, userId, by).catch((e) => {
-      console.error('✖ معالجة القرار فشلت:', e);
-      if (attempt && attempt.decision === 'processing') attempt.decision = 'pending';
-    });
-  }
-);
-
 app.use(express.json({ limit: '32kb' }));
 
 app.use((req, res, next) => {
@@ -585,7 +388,7 @@ app.use((req, res, next) => {
   next();
 });
 
-// Per-IP rate limits: general API traffic, and a tighter bucket for actions
+// Per-IP rate limits: general traffic, actions, and a strict one for the admin password
 const hits = new Map();
 function rateLimit(bucket, limit) {
   return (req, res, next) => {
@@ -600,16 +403,17 @@ function rateLimit(bucket, limit) {
   };
 }
 app.use(['/api', '/auth'], rateLimit('all', 90));
-app.use(['/api/exam', '/api/role', '/api/admin', '/auth/login', '/auth/callback'], (req, res, next) =>
-  req.method === 'GET' && req.path.startsWith('/attempts') ? next() : rateLimit('action', 20)(req, res, next)
-);
+app.use(['/api/exam', '/api/admin/decide', '/api/admin/reset', '/auth/login'], rateLimit('action', 20));
+app.use('/api/admin/login', rateLimit('admin-login', 5));
 setInterval(() => { const t = now(); for (const [k, v] of hits) if (t > v.reset) hits.delete(k); }, 120_000).unref();
 
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
 function currentUser(req) {
-  if (!DISCORD_READY) return null; // nothing works without Discord, so nobody is logged in
   return unsign(parseCookies(req).jt_session);
+}
+function currentAdmin(req) {
+  return ADMIN_PASSWORD ? unsign(parseCookies(req).jt_admin) : null;
 }
 function requireUser(req, res, next) {
   const user = currentUser(req);
@@ -618,65 +422,20 @@ function requireUser(req, res, next) {
   next();
 }
 function requireAdmin(req, res, next) {
-  const user = currentUser(req);
-  if (!user) return res.status(401).json({ error: 'not_logged_in' });
-  if (!isAdmin(user.id)) return res.status(403).json({ error: 'not_admin' });
-  req.user = user;
+  const admin = currentAdmin(req);
+  if (!admin) return res.status(401).json({ error: ADMIN_PASSWORD ? 'not_logged_in' : 'admin_disabled' });
+  req.admin = admin;
   next();
 }
 
-function startSession(res, user) {
-  const session = { id: user.id, username: user.username, name: user.name, avatar: user.avatar, exp: now() + 7 * 86400_000 };
+// ----- Player login (Discord username, no linking) -----
+app.post('/auth/login', (req, res) => {
+  const username = cleanUsername(req.body?.username);
+  if (!username) return res.status(400).json({ error: 'bad_username' });
+  const session = { id: userIdFor(username), username, exp: now() + 7 * 86400_000 };
   setCookie(res, 'jt_session', sign(session), 7 * 86400);
-}
-
-// ----- Auth -----
-app.get('/auth/login', (req, res) => {
-  if (!DISCORD_READY) return res.redirect('/?error=setup');
-  const state = randomId();
-  setCookie(res, 'jt_state', sign({ state, exp: now() + 10 * 60_000 }), 600);
-  const params = new URLSearchParams({
-    client_id: CLIENT_ID,
-    response_type: 'code',
-    redirect_uri: REDIRECT_URI,
-    scope: 'identify',
-    state,
-  });
-  res.redirect(`https://discord.com/oauth2/authorize?${params}`);
+  res.json({ ok: true });
 });
-
-app.get(
-  '/auth/callback',
-  wrap(async (req, res) => {
-    if (!DISCORD_READY) return res.redirect('/?error=setup');
-    const saved = unsign(parseCookies(req).jt_state);
-    setCookie(res, 'jt_state', '', 0);
-    if (req.query.error) return res.redirect('/?error=denied');
-    if (!saved || saved.state !== req.query.state || !req.query.code) return res.redirect('/?error=state');
-
-    const tokenRes = await fetch(`${API}/oauth2/token`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        client_id: CLIENT_ID,
-        client_secret: CLIENT_SECRET,
-        grant_type: 'authorization_code',
-        code: String(req.query.code),
-        redirect_uri: REDIRECT_URI,
-      }),
-    });
-    if (!tokenRes.ok) {
-      console.error('✖ OAuth token exchange failed:', tokenRes.status, await tokenRes.text());
-      return res.redirect('/?error=oauth');
-    }
-    const { access_token, token_type } = await tokenRes.json();
-    const me = await discord('GET', '/users/@me', { auth: `${token_type} ${access_token}` });
-    if (!me.ok) return res.redirect('/?error=oauth');
-
-    startSession(res, { id: me.data.id, username: me.data.username, name: me.data.global_name || me.data.username, avatar: me.data.avatar });
-    res.redirect('/');
-  })
-);
 
 app.post('/auth/logout', (req, res) => {
   setCookie(res, 'jt_session', '', 0);
@@ -684,122 +443,100 @@ app.post('/auth/logout', (req, res) => {
 });
 
 // ----- Player API -----
-app.get(
-  '/api/me',
-  wrap(async (req, res) => {
-    const { settings, rules, questions } = loadConfig();
-    const info = {
-      exam: {
-        title: settings.title,
-        passPercent: settings.passPercent,
-        questionCount: settings.questionCount > 0 ? Math.min(settings.questionCount, questions.length) : questions.length,
-        timeLimitMinutes: settings.timeLimitMinutes,
-        maxAttempts: settings.maxAttempts,
-        cooldownMinutes: settings.cooldownMinutes,
-        rules,
-      },
-      inviteUrl: INVITE_URL || null,
-      loginOpen: DISCORD_READY,
-    };
-    const user = DISCORD_READY ? currentUser(req) : null;
-    if (!user) return res.json({ ...info, user: null });
-    res.json({
-      ...info,
-      user: { id: user.id, username: user.username, name: user.name, avatar: avatarUrl(user), isAdmin: isAdmin(user.id) },
-      status: await userStatus(user),
-    });
-  })
-);
+app.get('/api/me', (req, res) => {
+  const { settings, rules, questions } = loadConfig();
+  const info = {
+    exam: {
+      title: settings.title,
+      passPercent: settings.passPercent,
+      questionCount: settings.questionCount > 0 ? Math.min(settings.questionCount, questions.length) : questions.length,
+      timeLimitMinutes: settings.timeLimitMinutes,
+      maxAttempts: settings.maxAttempts,
+      cooldownMinutes: settings.cooldownMinutes,
+      rules,
+    },
+    inviteUrl: INVITE_URL || null,
+  };
+  const user = currentUser(req);
+  if (!user) return res.json({ ...info, user: null });
+  res.json({
+    ...info,
+    user: { id: user.id, username: user.username, name: user.username, avatar: avatarUrl(user.username) },
+    status: userStatus(user),
+  });
+});
 
-app.post(
-  '/api/exam/start',
-  requireUser,
-  wrap(async (req, res) => {
-    const status = await userStatus(req.user);
-    const existing = store.active[req.user.id];
-    if (existing) return res.json(examPayload(existing));
-    if (status.state !== 'ready') return res.status(403).json({ error: status.state });
+app.post('/api/exam/start', requireUser, (req, res) => {
+  const status = userStatus(req.user);
+  const existing = store.active[req.user.id];
+  if (existing) return res.json(examPayload(existing));
+  if (status.state !== 'ready') return res.status(403).json({ error: status.state });
 
-    const { settings, questions } = loadConfig();
-    let picked = settings.shuffleQuestions ? shuffle(questions) : questions.slice();
-    if (settings.questionCount > 0) picked = picked.slice(0, settings.questionCount);
+  const { settings, questions } = loadConfig();
+  let picked = settings.shuffleQuestions ? shuffle(questions) : questions.slice();
+  if (settings.questionCount > 0) picked = picked.slice(0, settings.questionCount);
 
-    const t = now();
-    const active = {
-      examId: randomId(),
-      startedAt: t,
-      deadline: settings.timeLimitMinutes > 0 ? t + settings.timeLimitMinutes * 60_000 : null,
-      // Snapshot the questions so editing questions.json mid-exam can't break grading
-      items: picked.map((q) => {
-        const order = settings.shuffleOptions ? shuffle(q.options.map((_, i) => i)) : q.options.map((_, i) => i);
-        return { qid: q.id, question: q.question, options: order.map((i) => q.options[i]), correct: order.indexOf(q.correct) };
-      }),
-    };
-    store.active[req.user.id] = active;
-    saveStore();
-    res.json(examPayload(active));
-  })
-);
+  const t = now();
+  const active = {
+    examId: randomId(),
+    startedAt: t,
+    deadline: settings.timeLimitMinutes > 0 ? t + settings.timeLimitMinutes * 60_000 : null,
+    // Snapshot the questions so editing questions.json mid-exam can't break grading
+    items: picked.map((q) => {
+      const order = settings.shuffleOptions ? shuffle(q.options.map((_, i) => i)) : q.options.map((_, i) => i);
+      return { qid: q.id, question: q.question, options: order.map((i) => q.options[i]), correct: order.indexOf(q.correct) };
+    }),
+  };
+  store.active[req.user.id] = active;
+  saveStore();
+  res.json(examPayload(active));
+});
 
-app.post(
-  '/api/exam/submit',
-  requireUser,
-  wrap(async (req, res) => {
-    const active = store.active[req.user.id];
-    const { examId, answers, focusLost } = req.body || {};
-    if (typeof examId !== 'string' || !active || active.examId !== examId) return res.status(409).json({ error: 'no_active_exam' });
-    const cleanAnswers = answers && typeof answers === 'object' && !Array.isArray(answers) ? answers : {};
+app.post('/api/exam/submit', requireUser, (req, res) => {
+  const active = store.active[req.user.id];
+  const { examId, answers, focusLost } = req.body || {};
+  if (typeof examId !== 'string' || !active || active.examId !== examId) return res.status(409).json({ error: 'no_active_exam' });
+  const cleanAnswers = answers && typeof answers === 'object' && !Array.isArray(answers) ? answers : {};
 
-    const late = active.deadline && now() > active.deadline + SUBMIT_GRACE_MS;
-    const timedOut = Boolean(active.deadline && now() > active.deadline);
-    const attempt = gradeAndRecord(req.user, active, late ? null : cleanAnswers, { timedOut });
-    // Client-reported count of times the player left the exam tab (anti-cheat hint for admins)
-    attempt.focusLost = Number.isInteger(focusLost) ? Math.min(Math.max(focusLost, 0), 999) : null;
+  const late = active.deadline && now() > active.deadline + SUBMIT_GRACE_MS;
+  const timedOut = Boolean(active.deadline && now() > active.deadline);
+  const attempt = gradeAndRecord(req.user, active, late ? null : cleanAnswers, { timedOut });
+  // Client-reported count of times the player left the exam tab (anti-cheat hint for admins)
+  attempt.focusLost = Number.isInteger(focusLost) ? Math.min(Math.max(focusLost, 0), 999) : null;
 
-    const { settings } = loadConfig();
-    if (attempt.passed && settings.autoGrant) {
-      const r = await grantRole(req.user.id).catch((e) => ({ ok: false, error: e.message }));
-      attempt.decision = 'auto';
-      attempt.roleGranted = r.ok;
-      attempt.roleError = r.ok ? null : r.error;
-    } else if (attempt.passed) {
-      attempt.decision = 'pending'; // an admin accepts or rejects from the Discord message
-    }
-    store.attempts.push(attempt);
-    saveStore();
-    sendLog(attempt).catch((e) => console.error(e));
+  store.attempts.push(attempt);
+  saveStore();
+  sendResultLog(attempt).catch((e) => console.error(e));
 
-    res.json({
-      passed: attempt.passed,
-      pending: attempt.decision === 'pending',
-      score: attempt.score,
-      total: attempt.total,
-      percent: attempt.percent,
-      passPercent: attempt.passPercent,
-      timedOut: attempt.timedOut,
-      roleGranted: attempt.roleGranted,
-      review: settings.showReview ? attempt.answers.map(({ question, options, chosen, correct }) => ({ question, options, chosen, correct })) : null,
-      status: await userStatus(req.user),
-    });
-  })
-);
-
-app.post(
-  '/api/role/retry',
-  requireUser,
-  wrap(async (req, res) => {
-    // only once an admin accepted (or auto mode granted) can the player re-request a failed role grant
-    const attempt = userAttempts(req.user.id).find((a) => a.passed && ['accepted', 'auto', undefined].includes(a.decision));
-    if (!attempt) return res.status(403).json({ error: 'not_passed' });
-    const r = await grantRole(req.user.id);
-    attempt.roleGranted = r.ok;
-    attempt.roleError = r.ok ? null : r.error;
-    saveStore();
-    res.status(r.ok ? 200 : 502).json({ ok: r.ok, error: r.ok ? undefined : 'role_failed' });
-  })
-);
+  const { settings } = loadConfig();
+  res.json({
+    passed: attempt.passed,
+    pending: attempt.decision === 'pending',
+    score: attempt.score,
+    total: attempt.total,
+    percent: attempt.percent,
+    passPercent: attempt.passPercent,
+    timedOut: attempt.timedOut,
+    review: settings.showReview ? attempt.answers.map(({ question, options, chosen, correct }) => ({ question, options, chosen, correct })) : null,
+    status: userStatus(req.user),
+  });
+});
 
 // ----- Admin API -----
+app.post('/api/admin/login', (req, res) => {
+  if (!ADMIN_PASSWORD) return res.status(403).json({ error: 'admin_disabled' });
+  const name = String(req.body?.name || '').replace(/[<>\u0000-\u001f]/g, '').trim().slice(0, 32);
+  if (!name) return res.status(400).json({ error: 'name_required' });
+  if (!passwordOk(req.body?.password)) return res.status(401).json({ error: 'wrong_password' });
+  setCookie(res, 'jt_admin', sign({ name, exp: now() + 12 * 3600_000 }), 12 * 3600);
+  res.json({ ok: true, name });
+});
+
+app.post('/api/admin/logout', (req, res) => {
+  setCookie(res, 'jt_admin', '', 0);
+  res.json({ ok: true });
+});
+
 app.get('/api/admin/attempts', requireAdmin, (req, res) => {
   const attempts = store.attempts.slice().reverse();
   const passed = attempts.filter((a) => a.passed).length;
@@ -812,6 +549,7 @@ app.get('/api/admin/attempts', requireAdmin, (req, res) => {
     }
   }
   res.json({
+    admin: req.admin.name,
     stats: {
       total: attempts.length,
       passed,
@@ -830,17 +568,31 @@ app.get('/api/admin/attempts', requireAdmin, (req, res) => {
   });
 });
 
-const adminRef = (user) => ({ id: user.id, username: user.username, name: user.name });
+// Accept (= "I gave the role in Discord") or reject a passed attempt, under the admin's name
+app.post('/api/admin/decide', requireAdmin, (req, res) => {
+  const { attemptId, action } = req.body || {};
+  if (!['accept', 'reject'].includes(action)) return res.status(400).json({ error: 'bad_action' });
+  const attempt = store.attempts.find((a) => a.id === attemptId);
+  if (!attempt || !attempt.passed) return res.status(404).json({ error: 'not_found' });
+  if (attempt.decision !== 'pending') return res.status(409).json({ error: 'already_decided', by: attempt.decidedBy?.name });
+
+  attempt.decision = action === 'accept' ? 'accepted' : 'rejected';
+  attempt.decidedBy = { name: req.admin.name, at: now() };
+  store.adminLog.push({ action, userId: attempt.userId, username: attempt.username, by: { name: req.admin.name }, at: now() });
+  saveStore();
+  sendAdminLog(action, attempt.username, req.admin.name).catch((e) => console.error(e));
+  res.json({ ok: true });
+});
 
 app.post('/api/admin/reset', requireAdmin, (req, res) => {
   const userId = String(req.body?.userId || '');
-  if (!/^\d{5,25}$/.test(userId)) return res.status(400).json({ error: 'bad_user' });
-  const by = adminRef(req.user);
+  if (!/^u_[a-z0-9_.#]{2,40}$/.test(userId)) return res.status(400).json({ error: 'bad_user' });
+  const username = userId.slice(2);
   store.resets[userId] = now();
   delete store.active[userId];
-  store.adminLog.push({ action: 'reset', userId, by, at: now() });
+  store.adminLog.push({ action: 'reset', userId, username, by: { name: req.admin.name }, at: now() });
   saveStore();
-  sendResetLog(userId, by).catch((e) => console.error(e));
+  sendAdminLog('reset', username, req.admin.name).catch((e) => console.error(e));
   res.json({ ok: true });
 });
 
@@ -864,7 +616,5 @@ app.use((err, req, res, next) => {
 loadStore();
 loadConfig();
 app.listen(PORT, () => {
-  console.log(`\n  ⚖  Justice Town Exam شغّال على ${BASE_URL}`);
-  console.log(`     رابط الرجوع اللي تحطه في Discord Redirects: ${REDIRECT_URI}`);
-  console.log(`     رابط الأزرار (Interactions Endpoint URL): ${BASE_URL}/discord/interactions\n`);
+  console.log(`\n  ⚖  Justice Town Exam شغّال على ${BASE_URL}\n`);
 });
