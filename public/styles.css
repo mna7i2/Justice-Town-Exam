@@ -21,8 +21,6 @@
   --warn: #ffc25c;
   --radius: 22px;
   --ease: cubic-bezier(.2, .8, .2, 1);
-  --mx: 50vw;
-  --my: 40vh;
   --font: "Readex Pro", system-ui, sans-serif;
   --display: "Chakra Petch", "Readex Pro", sans-serif;
   color-scheme: dark;
@@ -50,13 +48,11 @@ a { color: inherit; text-decoration: none; }
 
 /* ---------------- Ambient layers ---------------- */
 .aurora { position: fixed; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; }
-.aurora i {
-  position: absolute; border-radius: 50%; filter: blur(90px); opacity: .55;
-  mix-blend-mode: screen; will-change: transform;
-}
-.aurora i:nth-child(1) { width: 46vmax; height: 46vmax; background: #1d3d9c; top: -18vmax; right: -10vmax; animation: drift1 26s var(--ease) infinite alternate; }
-.aurora i:nth-child(2) { width: 36vmax; height: 36vmax; background: #3b2a8f; bottom: -16vmax; left: -12vmax; animation: drift2 32s var(--ease) infinite alternate; opacity: .4; }
-.aurora i:nth-child(3) { width: 26vmax; height: 26vmax; background: #0f6c9a; top: 30%; left: 30%; animation: drift3 22s var(--ease) infinite alternate; opacity: .28; }
+/* soft blobs drawn with gradients (a CSS blur filter here was the main source of lag) */
+.aurora i { position: absolute; border-radius: 50%; will-change: transform; }
+.aurora i:nth-child(1) { width: 70vmax; height: 70vmax; background: radial-gradient(closest-side, rgba(29, 61, 156, .55), transparent); top: -30vmax; right: -22vmax; animation: drift1 26s var(--ease) infinite alternate; }
+.aurora i:nth-child(2) { width: 60vmax; height: 60vmax; background: radial-gradient(closest-side, rgba(59, 42, 143, .4), transparent); bottom: -28vmax; left: -22vmax; animation: drift2 32s var(--ease) infinite alternate; }
+.aurora i:nth-child(3) { width: 44vmax; height: 44vmax; background: radial-gradient(closest-side, rgba(15, 108, 154, .25), transparent); top: 22%; left: 22%; animation: drift3 22s var(--ease) infinite alternate; }
 @keyframes drift1 { to { transform: translate(-14vmax, 12vmax) scale(1.15); } }
 @keyframes drift2 { to { transform: translate(16vmax, -10vmax) scale(1.2); } }
 @keyframes drift3 { to { transform: translate(-10vmax, -8vmax) scale(.85); } }
@@ -65,19 +61,13 @@ a { color: inherit; text-decoration: none; }
 #bg-canvas { z-index: 1; }
 #fx-canvas { z-index: 60; }
 
-.spotlight {
-  position: fixed; inset: 0; z-index: 2; pointer-events: none;
-  background: radial-gradient(520px circle at var(--mx) var(--my), rgba(91, 138, 230, .13), transparent 60%);
-}
-.noise {
-  position: fixed; inset: 0; z-index: 3; pointer-events: none; opacity: .06;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-}
+/* Light mode (slow machines): freeze the big moving layers */
+.fx-low .aurora i { animation: none; }
+.fx-low .glass::before, .fx-low .glass::after { display: none; }
 
-/* ---------------- Custom cursor ---------------- */
-.cursor-dot, .cursor-ring { position: fixed; top: 0; left: 0; z-index: 100; pointer-events: none; opacity: 0; transition: opacity .3s; }
-.has-cursor .cursor-dot, .has-cursor .cursor-ring { opacity: 1; }
-.cursor-dot { width: 6px; height: 6px; margin: -3px 0 0 -3px; border-radius: 50%; background: #fff; box-shadow: 0 0 12px 2px var(--brand); }
+/* ---------------- Cursor glow ring (the real cursor stays visible) ---------------- */
+.cursor-ring { position: fixed; top: 0; left: 0; z-index: 100; pointer-events: none; opacity: 0; transition: opacity .3s; will-change: transform; }
+.has-cursor .cursor-ring { opacity: 1; }
 .cursor-ring {
   width: 38px; height: 38px; margin: -19px 0 0 -19px; border-radius: 50%;
   border: 1.5px solid rgba(157, 187, 255, .55);
@@ -85,7 +75,6 @@ a { color: inherit; text-decoration: none; }
 }
 .cursor-ring.is-hover { width: 64px; height: 64px; margin: -32px 0 0 -32px; background: rgba(91, 138, 230, .12); border-color: var(--brand-hi); }
 .cursor-ring.is-down { width: 26px; height: 26px; margin: -13px 0 0 -13px; background: rgba(91, 138, 230, .3); }
-.has-cursor, .has-cursor * { cursor: none !important; }
 
 /* ---------------- Top bar ---------------- */
 .topbar {
@@ -101,7 +90,7 @@ a { color: inherit; text-decoration: none; }
 .topbar-end { display: flex; align-items: center; gap: 10px; }
 .user-chip {
   display: flex; align-items: center; gap: 10px; padding: 5px 6px 5px 14px;
-  border: 1px solid var(--line); border-radius: 999px; background: var(--glass); backdrop-filter: blur(14px);
+  border: 1px solid var(--line); border-radius: 999px; background: var(--glass);
   font-size: 14px;
 }
 .user-chip img { border-radius: 50%; }
@@ -113,7 +102,7 @@ a { color: inherit; text-decoration: none; }
 .icon-btn:hover { background: rgba(255, 95, 120, .15); color: var(--bad); }
 .admin-link, .dev-badge {
   font-size: 13px; padding: 7px 14px; border-radius: 999px; border: 1px solid var(--line);
-  background: var(--glass); backdrop-filter: blur(14px); white-space: nowrap;
+  background: var(--glass); white-space: nowrap;
 }
 .admin-link:hover { border-color: var(--brand); color: var(--brand-hi); }
 .dev-badge { border-color: rgba(255, 194, 92, .4); color: var(--warn); }
@@ -122,7 +111,7 @@ a { color: inherit; text-decoration: none; }
 main { position: relative; z-index: 10; width: min(1080px, 100%); margin: 0 auto; padding: 110px 16px 80px; min-height: 100vh; min-height: 100dvh; }
 .view { display: none; }
 .view.is-active { display: block; animation: viewIn .7s var(--ease) both; }
-@keyframes viewIn { from { opacity: 0; transform: translateY(18px); filter: blur(6px); } }
+@keyframes viewIn { from { opacity: 0; transform: translateY(18px) } }
 
 .view-loading.is-active { display: grid; place-items: center; min-height: 60vh; }
 .loader { display: flex; gap: 8px; }
@@ -142,11 +131,9 @@ main { position: relative; z-index: 10; width: min(1080px, 100%); margin: 0 auto
 .glass {
   --x: 50%; --y: 50%; --rx: 0deg; --ry: 0deg;
   position: relative; isolation: isolate;
-  background: linear-gradient(160deg, var(--glass-hi), var(--glass));
+  background: linear-gradient(160deg, rgba(22, 32, 58, .86), rgba(10, 15, 30, .8));
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  backdrop-filter: blur(18px) saturate(140%);
-  -webkit-backdrop-filter: blur(18px) saturate(140%);
   box-shadow: 0 30px 60px -30px rgba(0, 0, 0, .7), inset 0 1px 0 rgba(255, 255, 255, .05);
   transform: perspective(1000px) rotateX(var(--rx)) rotateY(var(--ry));
   transition: transform .5s var(--ease), border-color .4s, box-shadow .4s;
@@ -228,7 +215,7 @@ main { position: relative; z-index: 10; width: min(1080px, 100%); margin: 0 auto
 .split.outline .ch { background: none; color: transparent; -webkit-text-stroke: 1.5px var(--brand); }
 .split .ch:hover { transform: translateY(-10px) scale(1.06); }
 .split.outline .ch:hover { color: var(--brand); text-shadow: 0 0 30px var(--brand); }
-@keyframes chIn { from { opacity: 0; transform: translateY(40px) rotateX(70deg); filter: blur(8px); } }
+@keyframes chIn { from { opacity: 0; transform: translateY(40px) rotateX(70deg) } }
 
 .hero-sub { margin: 22px 0 0; max-width: 520px; color: var(--muted); font-size: clamp(15px, 2.2vw, 17px); }
 .hero-sub strong { color: var(--brand-hi); font-weight: 600; }
@@ -319,9 +306,9 @@ main { position: relative; z-index: 10; width: min(1080px, 100%); margin: 0 auto
 .question-card.swap-out { animation: qOut .28s var(--ease) forwards; }
 .question-card.swap-in-next { animation: qInNext .5s var(--ease) both; }
 .question-card.swap-in-prev { animation: qInPrev .5s var(--ease) both; }
-@keyframes qOut { to { opacity: 0; transform: scale(.97) translateY(8px); filter: blur(4px); } }
-@keyframes qInNext { from { opacity: 0; transform: translateX(-40px) rotateY(8deg); filter: blur(6px); } }
-@keyframes qInPrev { from { opacity: 0; transform: translateX(40px) rotateY(-8deg); filter: blur(6px); } }
+@keyframes qOut { to { opacity: 0; transform: scale(.97) translateY(8px) } }
+@keyframes qInNext { from { opacity: 0; transform: translateX(-40px) rotateY(8deg) } }
+@keyframes qInPrev { from { opacity: 0; transform: translateX(40px) rotateY(-8deg) } }
 .q-index { position: absolute; top: 18px; left: 26px; font-family: var(--display); font-weight: 700; font-size: clamp(54px, 9vw, 86px); line-height: 1; color: transparent; -webkit-text-stroke: 1px rgba(157, 187, 255, .16); pointer-events: none; }
 .q-text { position: relative; margin: 0 0 28px; padding-left: 80px; font-size: clamp(19px, 3vw, 25px); font-weight: 600; line-height: 1.6; }
 .options { display: grid; gap: 12px; }
@@ -392,7 +379,7 @@ kbd { font-family: var(--display); font-size: 11px; padding: 1px 6px; border-rad
 
 /* ---------------- Modal & toasts ---------------- */
 .modal { position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; padding: 16px; }
-.modal-backdrop { position: absolute; inset: 0; background: rgba(2, 4, 10, .7); backdrop-filter: blur(6px); animation: fade .3s both; }
+.modal-backdrop { position: absolute; inset: 0; background: rgba(2, 4, 10, .7); animation: fade .3s both; }
 .modal-card { width: min(440px, 100%); padding: 30px 28px 24px; animation: pop .45s var(--ease) both; }
 .modal-card h3 { margin: 0 0 8px; font-size: 21px; }
 .modal-card p { margin: 0; color: var(--muted); }
@@ -401,7 +388,7 @@ kbd { font-family: var(--display); font-size: 11px; padding: 1px 6px; border-rad
 @keyframes pop { from { opacity: 0; transform: scale(.92) translateY(10px); } }
 
 .toasts { position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%); z-index: 90; display: grid; gap: 10px; width: min(420px, calc(100% - 32px)); }
-.toast { padding: 13px 18px; border-radius: 14px; background: rgba(16, 24, 44, .92); border: 1px solid var(--line-hi); backdrop-filter: blur(12px); font-size: 14px; box-shadow: 0 20px 40px -18px #000; animation: pop .4s var(--ease) both; }
+.toast { padding: 13px 18px; border-radius: 14px; background: rgba(16, 24, 44, .92); border: 1px solid var(--line-hi); font-size: 14px; box-shadow: 0 20px 40px -18px #000; animation: pop .4s var(--ease) both; }
 .toast.bad { border-color: rgba(255, 95, 120, .5); }
 .toast.out { animation: fade .3s reverse forwards; }
 
