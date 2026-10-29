@@ -49,6 +49,9 @@
 
 .d-granted { margin: 0 0 14px; padding: 10px 14px; border-radius: 12px; background: rgba(91, 138, 230, .1); border: 1px solid rgba(91, 138, 230, .35); font-size: 14px; }
 .d-granted b { color: var(--brand-hi); }
+.d-granted.is-rejected { background: rgba(255, 95, 120, .08); border-color: rgba(255, 95, 120, .35); }
+.d-granted.is-pending { background: rgba(255, 194, 92, .08); border-color: rgba(255, 194, 92, .35); color: var(--warn); }
+.stat-v.warn { color: var(--warn); }
 .d-history { margin: 0 0 14px; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--line); background: rgba(255, 255, 255, .02); }
 .d-history h4 { margin: 0 0 6px; font-size: 13px; color: var(--muted); font-weight: 500; }
 .d-history p { margin: 2px 0; font-size: 13px; }

@@ -10,7 +10,8 @@
     "maxAttempts": 3,
     "shuffleQuestions": true,
     "shuffleOptions": true,
-    "showReview": false
+    "showReview": false,
+    "autoGrant": false
   },
 
   "rules": [

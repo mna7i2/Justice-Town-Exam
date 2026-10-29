@@ -145,6 +145,14 @@
           <p>عندك رتبة التفعيل في السيرفر، ما تحتاج تختبر مرة ثانية. نشوفك في المدينة!</p>
           <div class="panel-actions">${invite}</div>`;
         break;
+      case 'pending_review':
+        panel.innerHTML = `
+          <div class="panel-icon warn">${ICONS.clock}</div>
+          <h3>نجحت! 🎉 طلبك عند الإدارة</h3>
+          <p>نتيجتك وصلت للإدارة في Discord. أول ما يوافق أحد الإداريين توصلك الرتبة تلقائياً — ما تحتاج تسوي شي.</p>
+          <div class="panel-actions"><button class="btn btn-ghost" id="recheck">تحديث الحالة</button></div>`;
+        $('#recheck').addEventListener('click', refresh);
+        break;
       case 'role_pending':
         panel.innerHTML = `
           <div class="panel-icon warn">${ICONS.alert}</div>
@@ -175,8 +183,8 @@
       case 'cooldown': {
         panel.innerHTML = `
           <div class="panel-icon bad">${ICONS.clock}</div>
-          <h3>انتظر قبل المحاولة الجاية</h3>
-          <p>آخر نتيجة لك كانت <b>${status.lastAttempt?.percent ?? 0}%</b>${status.lastAttempt?.timedOut ? ' (انتهى الوقت)' : ''}. راجع القوانين وارجع بعد:</p>
+          <h3>${status.lastAttempt?.rejected ? 'الإدارة رفضت طلبك' : 'انتظر قبل المحاولة الجاية'}</h3>
+          <p>${status.lastAttempt?.rejected ? 'راجعت الإدارة نتيجتك وما تم قبولها هالمرة' : `آخر نتيجة لك كانت <b>${status.lastAttempt?.percent ?? 0}%</b>${status.lastAttempt?.timedOut ? ' (انتهى الوقت)' : ''}`}. راجع القوانين وارجع بعد:</p>
           <div class="countdown" id="countdown"></div>`;
         const tick = () => {
           const left = Math.max(0, status.cooldownUntil - Date.now());
@@ -363,15 +371,19 @@
     $('#score-arc').style.strokeDashoffset = '540.35';
 
     $('#result-title').textContent = r.passed ? 'مبروك، نجحت! 🎉' : 'للأسف ما نجحت';
-    $('#result-sub').textContent = r.passed
-      ? r.roleGranted ? 'تم تفعيل حسابك وأُعطيت رتبتك في Discord تلقائياً.' : 'نجحت، بس صار خطأ في إعطاء الرتبة — اضغط إعادة الطلب أو تواصل مع الإدارة.'
-      : r.timedOut ? 'انتهى الوقت قبل ما تخلص.' : `تحتاج ${r.passPercent}% عشان تنجح. راجع القوانين وحاول مرة ثانية.`;
+    $('#result-sub').textContent = !r.passed
+      ? r.timedOut ? 'انتهى الوقت قبل ما تخلص.' : `تحتاج ${r.passPercent}% عشان تنجح. راجع القوانين وحاول مرة ثانية.`
+      : r.pending ? 'نتيجتك وصلت للإدارة في Discord. أول ما يوافقون توصلك الرتبة تلقائياً.'
+        : r.roleGranted ? 'تم تفعيل حسابك وأُعطيت رتبتك في Discord تلقائياً.' : 'نجحت، بس صار خطأ في إعطاء الرتبة — تواصل مع الإدارة.';
 
     const st = r.status;
+    const roleChip = r.pending
+      ? '<span class="chip">⏳ بانتظار موافقة الإدارة</span>'
+      : `<span class="chip ${r.roleGranted ? 'ok' : 'bad'}">${r.roleGranted ? '✔ الرتبة وصلت' : '✖ الرتبة ما وصلت'}</span>`;
     $('#result-meta').innerHTML = [
       `<span class="chip">الإجابات الصحيحة: <b>${r.score}/${r.total}</b></span>`,
       `<span class="chip">المطلوب: <b>${r.passPercent}%</b></span>`,
-      r.passed ? `<span class="chip ${r.roleGranted ? 'ok' : 'bad'}">${r.roleGranted ? '✔ الرتبة وصلت' : '✖ الرتبة ما وصلت'}</span>` : '',
+      r.passed ? roleChip : '',
       !r.passed && st.attemptsLeft !== null ? `<span class="chip bad">المحاولات المتبقية: <b>${st.attemptsLeft}</b></span>` : '',
     ].join('');
 

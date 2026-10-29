@@ -62,7 +62,7 @@
       ['ناجح', s.passed, 'ok'],
       ['راسب', s.failed, 'bad'],
       ['نسبة النجاح', `${s.passRate}<small>%</small>`, ''],
-      ['متوسط الدرجات', `${s.avgPercent}<small>%</small>`, ''],
+      ['بانتظار قرار الإدارة', data.attempts.filter(isPending).length, 'warn'],
       ['يختبرون الحين', s.inProgress, ''],
     ];
     $('#stats').innerHTML = cards.map(([k, v, c]) => `<div class="glass stat"><span class="stat-k">${k}</span><span class="stat-v ${c}">${v}</span></div>`).join('');
@@ -74,20 +74,26 @@
       if (filter === 'pass' && !a.passed) return false;
       if (filter === 'fail' && a.passed) return false;
       if (filter === 'role' && !(a.passed && !a.roleGranted)) return false;
-      if (filter === 'manual' && !a.grantedBy) return false;
-      if (q && !`${a.name} ${a.username} ${a.userId} ${a.grantedBy ? `${a.grantedBy.name} ${a.grantedBy.username}` : ''}`.toLowerCase().includes(q)) return false;
+      if (filter === 'pending' && !isPending(a)) return false;
+      if (q && !`${a.name} ${a.username} ${a.userId} ${a.decidedBy ? `${a.decidedBy.name} ${a.decidedBy.username}` : ''}`.toLowerCase().includes(q)) return false;
       return true;
     });
   }
 
-  // Who activated the player: the admin's name for a manual grant, "تلقائي" for passing the exam
+  function isPending(a) {
+    return a.passed && (a.decision === 'pending' || a.decision === 'processing');
+  }
+
+  // Who decided: the admin who clicked Accept/Reject in Discord, or "تلقائي" in auto mode
   function badge(a) {
-    if (a.grantedBy) return `<span class="badge staff">🛡 فعّله: ${esc(a.grantedBy.name)}</span>`;
     if (!a.passed) return `<span class="badge bad">${a.timedOut ? 'انتهى الوقت' : 'راسب'}</span>`;
+    if (isPending(a)) return '<span class="badge warn">⏳ بانتظار قرار الإدارة</span>';
+    if (a.decision === 'rejected') return `<span class="badge bad">❌ رفضه: ${esc(a.decidedBy?.name || 'إداري')}</span>`;
+    if (a.decision === 'accepted') return `<span class="badge staff">✅ قبله: ${esc(a.decidedBy?.name || 'إداري')}</span>`;
     return a.roleGranted ? '<span class="badge ok">ناجح · تفعيل تلقائي</span>' : '<span class="badge warn">ناجح · الرتبة فشلت</span>';
   }
 
-  const ACTIONS = { grant: '🛡 فعّل', reset: '🔁 فتح محاولات لـ' };
+  const ACTIONS = { accept: '✅ قبل', reject: '❌ رفض', reset: '🔁 فتح محاولات لـ' };
   function playerName(userId) {
     const a = data.attempts.find((x) => x.userId === userId);
     return a ? a.name : userId;
@@ -140,7 +146,7 @@
       </div>`).join('');
     const actionHistory = data.adminLog
       .filter((l) => l.userId === a.userId)
-      .map((l) => `<p>${l.action === 'grant' ? '🛡 تفعيل يدوي' : '🔁 فتح محاولات جديدة'} — بواسطة <b>${esc(l.by.name)}</b> · <bdi>${fmtDate(l.at)}</bdi></p>`)
+      .map((l) => `<p>${{ accept: '✅ قبول', reject: '❌ رفض', reset: '🔁 فتح محاولات جديدة' }[l.action] || l.action} — بواسطة <b>${esc(l.by.name)}</b> · <bdi>${fmtDate(l.at)}</bdi></p>`)
       .join('');
 
     $('#drawer-body').innerHTML = `
@@ -156,13 +162,13 @@
         ${a.focusLost == null ? '' : `<span class="chip ${a.focusLost >= 3 ? 'bad' : ''}">طلع من الصفحة: ${a.focusLost} مرة</span>`}
         <span class="chip">${fmtDate(a.submittedAt)}</span>
       </div>
-      ${a.grantedBy ? `<p class="d-granted">🛡 فعّله يدوياً الإداري <b>${esc(a.grantedBy.name)}</b> <bdi>(@${esc(a.grantedBy.username)})</bdi> · <bdi>${fmtDate(a.grantedBy.at)}</bdi></p>` : ''}
+      ${a.decidedBy ? `<p class="d-granted ${a.decision === 'rejected' ? 'is-rejected' : ''}">${a.decision === 'rejected' ? '❌ رفضه' : '✅ قبله'} الإداري <b>${esc(a.decidedBy.name)}</b> <bdi>(@${esc(a.decidedBy.username)})</bdi> من Discord · <bdi>${fmtDate(a.decidedBy.at)}</bdi></p>` : ''}
+      ${isPending(a) ? '<p class="d-granted is-pending">⏳ بانتظار قرار الإدارة — القبول والرفض من رسالته في روم النتائج بالدسكورد</p>' : ''}
       ${actionHistory ? `<div class="d-history"><h4>إجراءات الإدارة على هذا اللاعب</h4>${actionHistory}</div>` : ''}
       ${a.roleError ? `<p class="bad" style="color:var(--bad);margin:0 0 14px">سبب فشل الرتبة: ${esc(a.roleError)}</p>` : ''}
       ${questions}
       <div class="d-actions">
         <button class="btn btn-ghost" data-act="reset" data-user="${esc(a.userId)}">فتح محاولات جديدة لهذا اللاعب</button>
-        <button class="btn btn-ok" data-act="grant" data-user="${esc(a.userId)}">إعطاء الرتبة يدوياً</button>
       </div>`;
     $('#drawer').hidden = false;
   }
@@ -188,14 +194,8 @@
     if (act) {
       act.disabled = true;
       try {
-        if (act.dataset.act === 'reset') {
-          await api('/api/admin/reset', { userId: act.dataset.user });
-          toast('تم تصفير محاولات اللاعب — يقدر يختبر من جديد.');
-        } else {
-          await api('/api/admin/grant', { userId: act.dataset.user });
-          toast('تم إعطاء الرتبة ✔');
-          window.FX?.confetti();
-        }
+        await api('/api/admin/reset', { userId: act.dataset.user });
+        toast('تم تصفير محاولات اللاعب — يقدر يختبر من جديد.');
         closeDrawer();
         load();
       } catch (err) {

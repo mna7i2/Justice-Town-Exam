@@ -1,7 +1,9 @@
 // =====================================================================
 //  Justice Town — Roleplay Activation Exam
 //  Discord OAuth2 login → timed exam → server-side grading →
-//  automatic role grant + log to a Discord channel + admin dashboard.
+//  result posted to a Discord channel with Accept / Reject buttons →
+//  the admin who clicks decides, the role is granted, and the dashboard
+//  records who decided.
 // =====================================================================
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '.env') });
@@ -24,11 +26,15 @@ const ROLE_ID = env('DISCORD_ROLE_ID');
 const REMOVE_ROLE_ID = env('DISCORD_REMOVE_ROLE_ID');
 const LOG_CHANNEL_ID = env('DISCORD_LOG_CHANNEL_ID');
 const INVITE_URL = env('DISCORD_INVITE_URL');
+const PUBLIC_KEY = env('DISCORD_PUBLIC_KEY');
 const REDIRECT_URI = `${BASE_URL}/auth/callback`;
 
 const ADMIN_IDS = new Set(env('ADMIN_IDS').split(',').map((s) => s.trim()).filter(Boolean));
 
-const missing = ['DISCORD_CLIENT_ID', 'DISCORD_CLIENT_SECRET', 'DISCORD_BOT_TOKEN', 'DISCORD_GUILD_ID', 'DISCORD_ROLE_ID', 'SESSION_SECRET'].filter((k) => !env(k));
+const missing = [
+  'DISCORD_CLIENT_ID', 'DISCORD_CLIENT_SECRET', 'DISCORD_BOT_TOKEN', 'DISCORD_PUBLIC_KEY',
+  'DISCORD_GUILD_ID', 'DISCORD_ROLE_ID', 'DISCORD_LOG_CHANNEL_ID', 'SESSION_SECRET',
+].filter((k) => !env(k));
 if (missing.length) {
   console.error(`✖ إعدادات ناقصة: ${missing.join(', ')}`);
   console.error('  أضفها في Environment (على Render) أو في ملف .env');
@@ -41,6 +47,17 @@ if (SESSION_SECRET.length < 24) {
 }
 if (!ADMIN_IDS.size) console.warn('⚠ ADMIN_IDS فاضي — ما أحد يقدر يدخل لوحة النتائج /admin');
 const isAdmin = (id) => ADMIN_IDS.has(id);
+
+// Ed25519 key Discord signs button clicks with (General Information → Public Key)
+let interactionKey;
+try {
+  const raw = Buffer.from(PUBLIC_KEY, 'hex');
+  if (raw.length !== 32) throw new Error('length');
+  interactionKey = crypto.createPublicKey({ key: Buffer.concat([Buffer.from('302a300506032b6570032100', 'hex'), raw]), format: 'der', type: 'spki' });
+} catch {
+  console.error('✖ DISCORD_PUBLIC_KEY غلط — انسخه من General Information في Discord Developer Portal');
+  process.exit(1);
+}
 
 // ---------------------------------------------------------------------
 //  Exam config (config/questions.json) — re-read whenever the file changes
@@ -56,6 +73,8 @@ const DEFAULT_SETTINGS = {
   shuffleQuestions: true,
   shuffleOptions: true,
   showReview: false,
+  // false = an admin accepts/rejects from Discord; true = passing grants the role at once
+  autoGrant: false,
 };
 let configCache = { mtime: 0, data: null };
 
@@ -108,6 +127,8 @@ function loadStore() {
   fs.mkdirSync(DATA_DIR, { recursive: true });
   if (fs.existsSync(STORE_FILE)) {
     store = { ...store, ...JSON.parse(fs.readFileSync(STORE_FILE, 'utf8')) };
+    // a decision cut off by a restart goes back to waiting for an admin
+    for (const a of store.attempts) if (a.decision === 'processing') a.decision = 'pending';
   }
 }
 function saveStore() {
@@ -232,20 +253,18 @@ async function grantRole(userId, by = null) {
   return { ok: true };
 }
 
-async function postLog(embed) {
-  if (!LOG_CHANNEL_ID) return;
+async function postLog(embed, components = []) {
   const r = await discord('POST', `/channels/${LOG_CHANNEL_ID}/messages`, {
-    body: { embeds: [embed], allowed_mentions: { parse: [] } },
+    body: { embeds: [embed], components, allowed_mentions: { parse: [] } },
   });
   if (!r.ok) console.error('✖ إرسال الرسالة لروم اللوق فشل:', r.status, r.data);
 }
 
-// Dashboard actions (manual activation / reopening attempts), so every admin action is on record in Discord
-function sendAdminLog(action, userId, admin) {
-  const isGrant = action === 'grant';
+// Reopening attempts from the dashboard is also put on record in Discord
+function sendResetLog(userId, admin) {
   return postLog({
-    title: isGrant ? '🛡 تفعيل يدوي من الإدارة' : '🔁 فتح محاولات جديدة',
-    color: isGrant ? 0x5b8ae6 : 0xffc25c,
+    title: '🔁 فتح محاولات جديدة',
+    color: 0xffc25c,
     fields: [
       { name: 'اللاعب', value: `<@${userId}>`, inline: true },
       { name: 'الإداري', value: `<@${admin.id}>\n\`${admin.username}\``, inline: true },
@@ -255,16 +274,32 @@ function sendAdminLog(action, userId, admin) {
   });
 }
 
+const DECISION_TEXT = {
+  pending: '⏳ بانتظار قرار الإدارة',
+  auto: '✔ انعطت تلقائياً',
+};
+
+// Accept / Reject buttons; the custom_id carries the player id so a click still works
+// even if the stored attempt is gone (e.g. the free host wiped its disk)
+function decisionButtons(attempt) {
+  return [{
+    type: 1,
+    components: [
+      { type: 2, style: 3, label: 'قبول وإعطاء الرتبة', emoji: { name: '✅' }, custom_id: `jt:accept:${attempt.id}:${attempt.userId}` },
+      { type: 2, style: 4, label: 'رفض', emoji: { name: '✖️' }, custom_id: `jt:reject:${attempt.id}:${attempt.userId}` },
+    ],
+  }];
+}
+
 async function sendLog(attempt) {
-  if (!LOG_CHANNEL_ID) return;
   const wrong = attempt.answers.filter((a) => !a.isCorrect);
   let details = wrong
     .map((a) => `• **${a.question}**\n  ↳ جاوب: ${a.chosen === null ? '— لم يجاوب —' : a.options[a.chosen]}`)
     .join('\n');
   if (details.length > 3000) details = `${details.slice(0, 3000)}\n…`;
   const embed = {
-    title: attempt.passed ? '✅ نجاح في اختبار التفعيل' : '❌ رسوب في اختبار التفعيل',
-    color: attempt.passed ? 0x3ecf8e : 0xff5d6c,
+    title: !attempt.passed ? '❌ رسوب في اختبار التفعيل' : attempt.decision === 'pending' ? '📝 نجح — بانتظار قرار الإدارة' : '✅ نجاح في اختبار التفعيل',
+    color: !attempt.passed ? 0xff5d6c : attempt.decision === 'pending' ? 0xffc25c : 0x3ecf8e,
     thumbnail: { url: attempt.avatar },
     description: [
       wrong.length ? `**الأخطاء (${wrong.length}):**\n${details}` : '**جاوب على كل الأسئلة صح** 🎯',
@@ -278,14 +313,14 @@ async function sendLog(attempt) {
       { name: 'طلع من الصفحة', value: attempt.focusLost == null ? '—' : `${attempt.focusLost} مرة${attempt.focusLost >= 3 ? ' ⚠' : ''}`, inline: true },
       {
         name: 'الرتبة',
-        value: attempt.passed ? (attempt.roleGranted ? '✔ انعطت تلقائياً' : `✖ فشل: ${attempt.roleError}`) : '—',
+        value: !attempt.passed ? '—' : attempt.roleError ? `✖ فشل: ${attempt.roleError}` : DECISION_TEXT[attempt.decision] || '—',
         inline: true,
       },
     ],
     footer: { text: 'Justice Town • نظام التفعيل' },
     timestamp: new Date(attempt.submittedAt).toISOString(),
   };
-  await postLog(embed);
+  await postLog(embed, attempt.decision === 'pending' ? decisionButtons(attempt) : []);
 }
 
 // ---------------------------------------------------------------------
@@ -351,14 +386,17 @@ async function userStatus(user) {
   const hasRole = member.inGuild && member.roles.includes(ROLE_ID);
   const attempts = userAttempts(user.id);
   const last = attempts[attempts.length - 1] || null;
-  const passedAttempt = attempts.find((a) => a.passed) || null;
+  // a rejected pass counts like a failed attempt
+  const failed = (a) => !a.passed || a.decision === 'rejected';
+  const passedAttempt = attempts.find((a) => !failed(a)) || null;
   const attemptsLeft = settings.maxAttempts > 0 ? Math.max(0, settings.maxAttempts - attempts.length) : null;
-  let cooldownUntil = last && !last.passed && settings.cooldownMinutes > 0 ? last.submittedAt + settings.cooldownMinutes * 60_000 : 0;
+  let cooldownUntil = last && failed(last) && settings.cooldownMinutes > 0 ? last.submittedAt + settings.cooldownMinutes * 60_000 : 0;
   if (cooldownUntil <= now()) cooldownUntil = 0;
 
   let state = 'ready';
   if (!member.inGuild) state = 'not_in_guild';
   else if (hasRole) state = 'has_role';
+  else if (passedAttempt && ['pending', 'processing'].includes(passedAttempt.decision)) state = 'pending_review';
   else if (passedAttempt) state = 'role_pending';
   else if (store.active[user.id]) state = 'in_progress';
   else if (attemptsLeft === 0) state = 'no_attempts';
@@ -369,7 +407,13 @@ async function userStatus(user) {
     attemptsUsed: attempts.length,
     attemptsLeft,
     cooldownUntil,
-    lastAttempt: last && { percent: last.percent, passed: last.passed, submittedAt: last.submittedAt, timedOut: last.timedOut },
+    lastAttempt: last && {
+      percent: last.percent,
+      passed: last.passed,
+      rejected: last.decision === 'rejected',
+      submittedAt: last.submittedAt,
+      timedOut: last.timedOut,
+    },
   };
 }
 
@@ -389,6 +433,115 @@ function examPayload(active) {
 const app = express();
 app.set('trust proxy', 1);
 app.disable('x-powered-by');
+
+// ----- Discord buttons (Interactions Endpoint URL) -----
+// Registered before the JSON parser: the signature check needs the raw body.
+const PERM_ADMINISTRATOR = 1n << 3n;
+const PERM_MANAGE_ROLES = 1n << 28n;
+const ephemeral = (content) => ({ type: 4, data: { content, flags: 64 } });
+
+function verifyInteraction(req) {
+  const sig = req.get('x-signature-ed25519');
+  const ts = req.get('x-signature-timestamp');
+  if (!sig || !ts || !Buffer.isBuffer(req.body)) return false;
+  try {
+    return crypto.verify(null, Buffer.concat([Buffer.from(ts), req.body]), interactionKey, Buffer.from(sig, 'hex'));
+  } catch {
+    return false;
+  }
+}
+
+// Who may click Accept/Reject: anyone in ADMIN_IDS, or with Manage Roles / Administrator in the server
+function canDecide(member) {
+  if (!member?.user) return false;
+  if (ADMIN_IDS.has(member.user.id)) return true;
+  const perms = BigInt(member.permissions || '0');
+  return (perms & (PERM_ADMINISTRATOR | PERM_MANAGE_ROLES)) !== 0n;
+}
+
+// Rebuild the embed with the decision (sending back Discord's own embed object can be rejected)
+function decidedEmbed(old, accepted, by, error) {
+  const value = error ? `✖ فشل إعطاء الرتبة: ${error}` : accepted ? `✅ قبله <@${by.id}>` : `❌ رفضه <@${by.id}>`;
+  const fields = (old.fields || []).map((f) => (f.name === 'الرتبة' ? { name: f.name, value: accepted && !error ? '✔ انعطت' : '—', inline: true } : { name: f.name, value: f.value, inline: f.inline }));
+  fields.push({ name: 'القرار', value, inline: false });
+  return {
+    title: error ? '⚠ قبول — بس الرتبة ما انعطت' : accepted ? '✅ تم القبول' : '❌ تم الرفض',
+    color: error ? 0xffc25c : accepted ? 0x3ecf8e : 0xff5d6c,
+    description: old.description,
+    thumbnail: old.thumbnail?.url ? { url: old.thumbnail.url } : undefined,
+    fields,
+    footer: { text: 'Justice Town • نظام التفعيل' },
+    timestamp: new Date().toISOString(),
+  };
+}
+
+async function handleDecision(i, action, attemptId, userId, by) {
+  const accepted = action === 'accept';
+  const attempt = store.attempts.find((a) => a.id === attemptId);
+  let error = null;
+  if (accepted) {
+    const r = await grantRole(userId, by).catch((e) => ({ ok: false, error: e.message }));
+    if (!r.ok) error = r.error;
+  }
+  if (attempt) {
+    attempt.decision = error ? 'pending' : accepted ? 'accepted' : 'rejected';
+    attempt.decidedBy = error ? null : { ...by, at: now() };
+    attempt.roleGranted = accepted && !error;
+    attempt.roleError = error;
+  }
+  if (!error) store.adminLog.push({ action, userId, by, at: now() });
+  saveStore();
+
+  const old = i.message?.embeds?.[0] || {};
+  const edit = await discord('PATCH', `/webhooks/${i.application_id}/${i.token}/messages/@original`, {
+    body: {
+      embeds: [decidedEmbed(old, accepted, by, error)],
+      // keep the buttons if the grant failed so it can be retried
+      components: error ? i.message.components : [],
+      allowed_mentions: { parse: [] },
+    },
+  });
+  if (!edit.ok) console.error('✖ تعديل رسالة القرار فشل:', edit.status, edit.data);
+  if (error) {
+    await discord('POST', `/webhooks/${i.application_id}/${i.token}`, {
+      body: { content: `⚠ ما قدرت أعطي الرتبة: ${error}`, flags: 64 },
+    });
+  }
+}
+
+app.post(
+  '/discord/interactions',
+  express.raw({ type: '*/*', limit: '64kb' }),
+  (req, res) => {
+    if (!verifyInteraction(req)) return res.status(401).send('invalid request signature');
+    let i;
+    try { i = JSON.parse(req.body.toString('utf8')); } catch { return res.status(400).end(); }
+    if (i.type === 1) return res.json({ type: 1 }); // PING when you save the URL in the portal
+    if (i.type !== 3) return res.status(400).end();
+
+    const [ns, action, attemptId, userId] = String(i.data?.custom_id || '').split(':');
+    if (ns !== 'jt' || !['accept', 'reject'].includes(action) || !/^\d{5,25}$/.test(userId || '')) {
+      return res.json(ephemeral('زر غير معروف.'));
+    }
+    if (!canDecide(i.member)) return res.json(ephemeral('⛔ ما عندك صلاحية تقبل أو ترفض.'));
+
+    const attempt = store.attempts.find((a) => a.id === attemptId);
+    if (attempt && ['accepted', 'rejected', 'processing'].includes(attempt.decision)) {
+      return res.json(ephemeral(attempt.decision === 'processing' ? 'جاري التنفيذ…' : `تم البت فيه من قبل بواسطة ${attempt.decidedBy?.name || 'إداري'}.`));
+    }
+    if (attempt) attempt.decision = 'processing'; // blocks a double click while we work
+
+    const u = i.member.user;
+    const by = { id: u.id, username: u.username, name: i.member.nick || u.global_name || u.username };
+    // Acknowledge within Discord's 3 seconds, then do the work and edit the message
+    res.json({ type: 6 });
+    handleDecision(i, action, attemptId, userId, by).catch((e) => {
+      console.error('✖ معالجة القرار فشلت:', e);
+      if (attempt && attempt.decision === 'processing') attempt.decision = 'pending';
+    });
+  }
+);
+
 app.use(express.json({ limit: '32kb' }));
 
 app.use((req, res, next) => {
@@ -594,18 +747,22 @@ app.post(
     // Client-reported count of times the player left the exam tab (anti-cheat hint for admins)
     attempt.focusLost = Number.isInteger(focusLost) ? Math.min(Math.max(focusLost, 0), 999) : null;
 
-    if (attempt.passed) {
+    const { settings } = loadConfig();
+    if (attempt.passed && settings.autoGrant) {
       const r = await grantRole(req.user.id).catch((e) => ({ ok: false, error: e.message }));
+      attempt.decision = 'auto';
       attempt.roleGranted = r.ok;
       attempt.roleError = r.ok ? null : r.error;
+    } else if (attempt.passed) {
+      attempt.decision = 'pending'; // an admin accepts or rejects from the Discord message
     }
     store.attempts.push(attempt);
     saveStore();
     sendLog(attempt).catch((e) => console.error(e));
 
-    const { settings } = loadConfig();
     res.json({
       passed: attempt.passed,
+      pending: attempt.decision === 'pending',
       score: attempt.score,
       total: attempt.total,
       percent: attempt.percent,
@@ -622,7 +779,8 @@ app.post(
   '/api/role/retry',
   requireUser,
   wrap(async (req, res) => {
-    const attempt = userAttempts(req.user.id).find((a) => a.passed);
+    // only once an admin accepted (or auto mode granted) can the player re-request a failed role grant
+    const attempt = userAttempts(req.user.id).find((a) => a.passed && ['accepted', 'auto', undefined].includes(a.decision));
     if (!attempt) return res.status(403).json({ error: 'not_passed' });
     const r = await grantRole(req.user.id);
     attempt.roleGranted = r.ok;
@@ -673,33 +831,9 @@ app.post('/api/admin/reset', requireAdmin, (req, res) => {
   delete store.active[userId];
   store.adminLog.push({ action: 'reset', userId, by, at: now() });
   saveStore();
-  sendAdminLog('reset', userId, by).catch((e) => console.error(e));
+  sendResetLog(userId, by).catch((e) => console.error(e));
   res.json({ ok: true });
 });
-
-app.post(
-  '/api/admin/grant',
-  requireAdmin,
-  wrap(async (req, res) => {
-    const userId = String(req.body?.userId || '');
-    if (!/^\d{5,25}$/.test(userId)) return res.status(400).json({ error: 'bad_user' });
-    const by = adminRef(req.user);
-    const r = await grantRole(userId, by);
-    if (r.ok) {
-      // Credit the admin on the player's latest attempt so the results list shows who activated them
-      const latest = store.attempts.filter((a) => a.userId === userId).pop();
-      if (latest) {
-        latest.roleGranted = true;
-        latest.roleError = null;
-        latest.grantedBy = { ...by, at: now() };
-      }
-      store.adminLog.push({ action: 'grant', userId, by, at: now() });
-      saveStore();
-      sendAdminLog('grant', userId, by).catch((e) => console.error(e));
-    }
-    res.status(r.ok ? 200 : 502).json({ ok: r.ok, error: r.error });
-  })
-);
 
 // ----- Pages -----
 const PUBLIC_DIR = path.join(__dirname, 'public');
