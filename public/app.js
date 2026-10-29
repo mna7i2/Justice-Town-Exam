@@ -84,7 +84,7 @@
   async function boot() {
     const err = new URLSearchParams(location.search).get('error');
     if (err) {
-      const msgs = { denied: 'ألغيت تسجيل الدخول من Discord.', state: 'انتهت صلاحية طلب الدخول، جرّب مرة ثانية.', oauth: 'صار خطأ أثناء الربط مع Discord، جرّب مرة ثانية.' };
+      const msgs = { denied: 'ألغيت تسجيل الدخول من Discord.', state: 'انتهت صلاحية طلب الدخول، جرّب مرة ثانية.', oauth: 'صار خطأ أثناء الربط مع Discord، جرّب مرة ثانية.', setup: 'التسجيل يفتح قريباً.' };
       $('#login-error').textContent = msgs[err] || 'صار خطأ، جرّب مرة ثانية.';
       $('#login-error').hidden = false;
       history.replaceState(null, '', '/');
@@ -95,6 +95,15 @@
       show('landing');
       toast('ما قدرنا نتصل بالسيرفر، حدّث الصفحة.', true);
       return;
+    }
+    // Discord isn't connected on the server yet: keep the page, close the login
+    if (!info.loginOpen) {
+      const btn = $('#login-btn');
+      btn.classList.add('is-soon');
+      btn.removeAttribute('href');
+      btn.setAttribute('aria-disabled', 'true');
+      btn.querySelector('span').textContent = 'التسجيل يفتح قريباً';
+      $('#login-error').hidden = true;
     }
     if (!info.user) return show('landing');
 
@@ -115,8 +124,6 @@
     $('#st-count').textContent = e.questionCount;
     $('#st-time').innerHTML = fmtMinutes(e.timeLimitMinutes);
     $('#st-pass').innerHTML = `${e.passPercent}<small>%</small>`;
-    $('#st-left').innerHTML = status.attemptsLeft === null ? '∞' : `${status.attemptsLeft}<small>من ${e.maxAttempts}</small>`;
-
     const panel = $('#state-panel');
     clearInterval(cooldownId);
     const invite = info.inviteUrl ? `<a class="btn btn-primary" href="${esc(info.inviteUrl)}" target="_blank" rel="noopener">دخول سيرفر Discord</a>` : '';
@@ -376,16 +383,13 @@
       : r.pending ? 'نتيجتك وصلت للإدارة في Discord. أول ما يوافقون توصلك الرتبة تلقائياً.'
         : r.roleGranted ? 'تم تفعيل حسابك وأُعطيت رتبتك في Discord تلقائياً.' : 'نجحت، بس صار خطأ في إعطاء الرتبة — تواصل مع الإدارة.';
 
-    const st = r.status;
     const roleChip = r.pending
       ? '<span class="chip">⏳ بانتظار موافقة الإدارة</span>'
       : `<span class="chip ${r.roleGranted ? 'ok' : 'bad'}">${r.roleGranted ? '✔ الرتبة وصلت' : '✖ الرتبة ما وصلت'}</span>`;
     $('#result-meta').innerHTML = [
       `<span class="chip">الإجابات الصحيحة: <b>${r.score}/${r.total}</b></span>`,
       `<span class="chip">المطلوب: <b>${r.passPercent}%</b></span>`,
-      r.passed ? roleChip : '',
-      !r.passed && st.attemptsLeft !== null ? `<span class="chip bad">المحاولات المتبقية: <b>${st.attemptsLeft}</b></span>` : '',
-    ].join('');
+      r.passed ? roleChip : '',    ].join('');
 
     const invite = info.inviteUrl ? `<a class="btn btn-ok" href="${esc(info.inviteUrl)}" target="_blank" rel="noopener">افتح Discord</a>` : '';
     $('#result-actions').innerHTML = r.passed

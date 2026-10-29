@@ -7,7 +7,7 @@
     "questionCount": 10,
     "timeLimitMinutes": 10,
     "cooldownMinutes": 60,
-    "maxAttempts": 3,
+    "maxAttempts": 0,
     "shuffleQuestions": true,
     "shuffleOptions": true,
     "showReview": false,

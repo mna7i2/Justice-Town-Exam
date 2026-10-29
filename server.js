@@ -35,28 +35,32 @@ const missing = [
   'DISCORD_CLIENT_ID', 'DISCORD_CLIENT_SECRET', 'DISCORD_BOT_TOKEN', 'DISCORD_PUBLIC_KEY',
   'DISCORD_GUILD_ID', 'DISCORD_ROLE_ID', 'DISCORD_LOG_CHANNEL_ID', 'SESSION_SECRET',
 ].filter((k) => !env(k));
-if (missing.length) {
-  console.error(`✖ إعدادات ناقصة: ${missing.join(', ')}`);
-  console.error('  أضفها في Environment (على Render) أو في ملف .env');
-  process.exit(1);
+// Without the Discord keys the site still runs (pages load, login shows "opening soon"),
+// so it can be published first and connected to Discord later without code changes.
+const DISCORD_READY = missing.length === 0;
+if (!DISCORD_READY) {
+  console.warn(`⚠ الموقع شغّال بدون Discord — تسجيل الدخول مقفل لين تضيف: ${missing.join(', ')}`);
 }
-const SESSION_SECRET = env('SESSION_SECRET');
+// With no secret yet there are no logins to protect, so a per-boot random one is fine
+const SESSION_SECRET = env('SESSION_SECRET') || crypto.randomBytes(32).toString('hex');
 if (SESSION_SECRET.length < 24) {
   console.error('✖ SESSION_SECRET قصير جداً (لازم 24 حرف على الأقل)');
   process.exit(1);
 }
-if (!ADMIN_IDS.size) console.warn('⚠ ADMIN_IDS فاضي — ما أحد يقدر يدخل لوحة النتائج /admin');
+if (DISCORD_READY && !ADMIN_IDS.size) console.warn('⚠ ADMIN_IDS فاضي — ما أحد يقدر يدخل لوحة النتائج /admin');
 const isAdmin = (id) => ADMIN_IDS.has(id);
 
 // Ed25519 key Discord signs button clicks with (General Information → Public Key)
-let interactionKey;
-try {
-  const raw = Buffer.from(PUBLIC_KEY, 'hex');
-  if (raw.length !== 32) throw new Error('length');
-  interactionKey = crypto.createPublicKey({ key: Buffer.concat([Buffer.from('302a300506032b6570032100', 'hex'), raw]), format: 'der', type: 'spki' });
-} catch {
-  console.error('✖ DISCORD_PUBLIC_KEY غلط — انسخه من General Information في Discord Developer Portal');
-  process.exit(1);
+let interactionKey = null;
+if (PUBLIC_KEY) {
+  try {
+    const raw = Buffer.from(PUBLIC_KEY, 'hex');
+    if (raw.length !== 32) throw new Error('length');
+    interactionKey = crypto.createPublicKey({ key: Buffer.concat([Buffer.from('302a300506032b6570032100', 'hex'), raw]), format: 'der', type: 'spki' });
+  } catch {
+    console.error('✖ DISCORD_PUBLIC_KEY غلط — انسخه من General Information في Discord Developer Portal');
+    process.exit(1);
+  }
 }
 
 // ---------------------------------------------------------------------
@@ -513,6 +517,7 @@ app.post(
   '/discord/interactions',
   express.raw({ type: '*/*', limit: '64kb' }),
   (req, res) => {
+    if (!interactionKey || !DISCORD_READY) return res.status(503).send('discord not configured');
     if (!verifyInteraction(req)) return res.status(401).send('invalid request signature');
     let i;
     try { i = JSON.parse(req.body.toString('utf8')); } catch { return res.status(400).end(); }
@@ -603,6 +608,7 @@ setInterval(() => { const t = now(); for (const [k, v] of hits) if (t > v.reset)
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
 function currentUser(req) {
+  if (!DISCORD_READY) return null; // nothing works without Discord, so nobody is logged in
   return unsign(parseCookies(req).jt_session);
 }
 function requireUser(req, res, next) {
@@ -626,6 +632,7 @@ function startSession(res, user) {
 
 // ----- Auth -----
 app.get('/auth/login', (req, res) => {
+  if (!DISCORD_READY) return res.redirect('/?error=setup');
   const state = randomId();
   setCookie(res, 'jt_state', sign({ state, exp: now() + 10 * 60_000 }), 600);
   const params = new URLSearchParams({
@@ -641,6 +648,7 @@ app.get('/auth/login', (req, res) => {
 app.get(
   '/auth/callback',
   wrap(async (req, res) => {
+    if (!DISCORD_READY) return res.redirect('/?error=setup');
     const saved = unsign(parseCookies(req).jt_state);
     setCookie(res, 'jt_state', '', 0);
     if (req.query.error) return res.redirect('/?error=denied');
@@ -691,8 +699,9 @@ app.get(
         rules,
       },
       inviteUrl: INVITE_URL || null,
+      loginOpen: DISCORD_READY,
     };
-    const user = currentUser(req);
+    const user = DISCORD_READY ? currentUser(req) : null;
     if (!user) return res.json({ ...info, user: null });
     res.json({
       ...info,
@@ -856,5 +865,6 @@ loadStore();
 loadConfig();
 app.listen(PORT, () => {
   console.log(`\n  ⚖  Justice Town Exam شغّال على ${BASE_URL}`);
-  console.log(`     رابط الرجوع اللي تحطه في Discord Redirects: ${REDIRECT_URI}\n`);
+  console.log(`     رابط الرجوع اللي تحطه في Discord Redirects: ${REDIRECT_URI}`);
+  console.log(`     رابط الأزرار (Interactions Endpoint URL): ${BASE_URL}/discord/interactions\n`);
 });
