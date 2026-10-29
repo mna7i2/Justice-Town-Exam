@@ -64,7 +64,7 @@
       ['متوسط الدرجات', `${s.avgPercent}<small>%</small>`, ''],
       ['يختبرون الحين', s.inProgress, ''],
     ];
-    $('#stats').innerHTML = cards.map(([k, v, c]) => `<div class="glass stat" data-tilt><span class="stat-k">${k}</span><span class="stat-v ${c}">${v}</span></div>`).join('');
+    $('#stats').innerHTML = cards.map(([k, v, c]) => `<div class="glass stat"><span class="stat-k">${k}</span><span class="stat-v ${c}">${v}</span></div>`).join('');
   }
 
   function visibleAttempts() {

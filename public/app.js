@@ -122,7 +122,7 @@
 
     const panel = $('#state-panel');
     clearInterval(cooldownId);
-    const invite = info.inviteUrl ? `<a class="btn btn-primary" href="${esc(info.inviteUrl)}" target="_blank" rel="noopener" data-magnetic>دخول سيرفر Discord</a>` : '';
+    const invite = info.inviteUrl ? `<a class="btn btn-primary" href="${esc(info.inviteUrl)}" target="_blank" rel="noopener">دخول سيرفر Discord</a>` : '';
 
     switch (status.state) {
       case 'ready': {
@@ -133,7 +133,7 @@
           <p>اقرأ التعليمات زين قبل لا تبدأ — أول ما تضغط "ابدأ" يشتغل العداد.</p>
           ${rules}
           <label class="agree"><input type="checkbox" id="agree"><span class="box">${ICONS.check}</span><span>قرأت التعليمات وأتعهد إني أحل الاختبار بنفسي</span></label>
-          <div class="panel-actions"><button class="btn btn-primary" id="start-btn" disabled data-magnetic>ابدأ الاختبار</button></div>`;
+          <div class="panel-actions"><button class="btn btn-primary" id="start-btn" disabled>ابدأ الاختبار</button></div>`;
         $('#agree').addEventListener('change', (ev) => { $('#start-btn').disabled = !ev.target.checked; });
         $('#start-btn').addEventListener('click', async () => {
           const ok = await confirmModal('جاهز؟', `عندك ${e.questionCount} سؤال${e.timeLimitMinutes ? ` و ${e.timeLimitMinutes} دقيقة` : ''}. ما تقدر توقف العداد بعد ما تبدأ.`, 'ابدأ');
@@ -153,7 +153,7 @@
           <div class="panel-icon warn">${ICONS.alert}</div>
           <h3>نجحت، بس الرتبة ما وصلت</h3>
           <p>نجحت في الاختبار لكن صار خطأ أثناء إعطائك الرتبة. جرّب مرة ثانية، ولو ما ضبط تواصل مع الإدارة.</p>
-          <div class="panel-actions"><button class="btn btn-ok" id="retry-role" data-magnetic>إعادة طلب الرتبة</button></div>`;
+          <div class="panel-actions"><button class="btn btn-ok" id="retry-role">إعادة طلب الرتبة</button></div>`;
         $('#retry-role').addEventListener('click', async (ev) => {
           ev.currentTarget.disabled = true;
           try {
@@ -172,7 +172,7 @@
           <div class="panel-icon">${ICONS.users}</div>
           <h3>لازم تكون داخل السيرفر</h3>
           <p>عشان نقدر نعطيك الرتبة، ادخل سيرفر Justice Town في Discord أول، بعدين ارجع هنا.</p>
-          <div class="panel-actions">${invite}<button class="btn btn-ghost" id="recheck" data-magnetic>دخلت، تحقق مرة ثانية</button></div>`;
+          <div class="panel-actions">${invite}<button class="btn btn-ghost" id="recheck">دخلت، تحقق مرة ثانية</button></div>`;
         $('#recheck').addEventListener('click', refresh);
         break;
       case 'cooldown': {
@@ -293,11 +293,6 @@
       o.classList.toggle('is-selected', j === i);
       o.setAttribute('aria-checked', j === i);
     });
-    const btn = document.querySelectorAll('.option')[i];
-    if (btn && window.FX) {
-      const r = btn.getBoundingClientRect();
-      window.FX.burst(r.left + 30, r.top + r.height / 2, { count: 12, speed: 3 });
-    }
     updateChrome();
   }
 
@@ -383,10 +378,10 @@
       !r.passed && st.attemptsLeft !== null ? `<span class="chip bad">المحاولات المتبقية: <b>${st.attemptsLeft}</b></span>` : '',
     ].join('');
 
-    const invite = info.inviteUrl ? `<a class="btn btn-ok" href="${esc(info.inviteUrl)}" target="_blank" rel="noopener" data-magnetic>افتح Discord</a>` : '';
+    const invite = info.inviteUrl ? `<a class="btn btn-ok" href="${esc(info.inviteUrl)}" target="_blank" rel="noopener">افتح Discord</a>` : '';
     $('#result-actions').innerHTML = r.passed
-      ? `${invite}<button class="btn btn-ghost" data-act="dash" data-magnetic>الرجوع للرئيسية</button>`
-      : `<button class="btn btn-primary" data-act="dash" data-magnetic>الرجوع للرئيسية</button>`;
+      ? `${invite}<button class="btn btn-ghost" data-act="dash">الرجوع للرئيسية</button>`
+      : `<button class="btn btn-primary" data-act="dash">الرجوع للرئيسية</button>`;
 
     const review = $('#review');
     if (r.review) {
