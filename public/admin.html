@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Justice Town | لوحة النتائج</title>
+  <meta name="robots" content="noindex">
+  <meta name="theme-color" content="#03050b">
+  <link rel="icon" href="/assets/logo-circle.webp">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Readex+Pro:wght@300;400;500;600;700&family=Chakra+Petch:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/admin.css">
+</head>
+<body>
+  <div class="aurora" aria-hidden="true"><i></i><i></i><i></i></div>
+  <canvas id="bg-canvas" aria-hidden="true"></canvas>
+  <div class="spotlight" aria-hidden="true"></div>
+  <div class="noise" aria-hidden="true"></div>
+  <canvas id="fx-canvas" aria-hidden="true"></canvas>
+  <div class="cursor-dot" aria-hidden="true"></div>
+  <div class="cursor-ring" aria-hidden="true"></div>
+
+  <header class="topbar">
+    <a class="brand" href="/" data-magnetic>
+      <img src="/assets/logo.webp" alt="" width="34" height="34">
+      <span class="brand-text">JUSTICE<b>TOWN</b></span>
+    </a>
+    <div class="topbar-end">
+      <a class="admin-link" href="/" data-magnetic>صفحة الاختبار</a>
+    </div>
+  </header>
+
+  <main class="admin">
+    <div class="admin-head">
+      <div>
+        <p class="eyebrow"><span class="pulse"></span> لوحة الإدارة</p>
+        <h1>نتائج اختبار التفعيل</h1>
+      </div>
+      <button class="btn btn-ghost" id="reload" data-magnetic>
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg> تحديث
+      </button>
+    </div>
+
+    <div class="glass panel" id="denied" hidden>
+      <h3>ما عندك صلاحية</h3>
+      <p id="denied-text"></p>
+      <div class="panel-actions" id="denied-actions"></div>
+    </div>
+
+    <div id="content" hidden>
+      <div class="stats admin-stats" id="stats"></div>
+
+      <div class="admin-grid">
+        <div class="glass list-panel">
+          <div class="toolbar">
+            <div class="seg" id="filter">
+              <button class="is-on" data-f="all">الكل</button>
+              <button data-f="pass">ناجح</button>
+              <button data-f="fail">راسب</button>
+              <button data-f="role">رتبة فشلت</button>
+            </div>
+            <input class="search" id="search" type="search" placeholder="ابحث بالاسم أو الآيدي…" autocomplete="off">
+          </div>
+          <div class="rows" id="rows"></div>
+        </div>
+
+        <aside class="glass hardest">
+          <h3>أصعب الأسئلة</h3>
+          <p class="muted">نسبة اللي جاوبوا صح</p>
+          <div id="hardest"></div>
+        </aside>
+      </div>
+    </div>
+  </main>
+
+  <!-- Attempt drawer -->
+  <div class="modal" id="drawer" hidden>
+    <div class="modal-backdrop" data-close></div>
+    <div class="glass drawer-card" role="dialog" aria-modal="true">
+      <button class="icon-btn drawer-x" data-close aria-label="إغلاق">✕</button>
+      <div id="drawer-body"></div>
+    </div>
+  </div>
+
+  <div class="toasts" id="toasts" aria-live="polite"></div>
+
+  <script src="/effects.js"></script>
+  <script src="/admin.js"></script>
+</body>
+</html>

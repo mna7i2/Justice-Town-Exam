@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Justice Town | اختبار التفعيل</title>
+  <meta name="description" content="بوابة اختبار تفعيل الرول بلاي لسيرفر Justice Town — اربط حسابك في Discord واجتز الاختبار واستلم رتبتك تلقائياً.">
+  <meta name="theme-color" content="#03050b">
+  <meta property="og:title" content="Justice Town | اختبار التفعيل">
+  <meta property="og:description" content="اربط حسابك، اجتز الاختبار، واستلم رتبتك تلقائياً.">
+  <meta property="og:image" content="/assets/logo-circle.webp">
+  <link rel="icon" href="/assets/logo-circle.webp">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Readex+Pro:wght@300;400;500;600;700&family=Chakra+Petch:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <!-- ===== Ambient layers ===== -->
+  <div class="aurora" aria-hidden="true"><i></i><i></i><i></i></div>
+  <canvas id="bg-canvas" aria-hidden="true"></canvas>
+  <div class="spotlight" aria-hidden="true"></div>
+  <div class="noise" aria-hidden="true"></div>
+  <canvas id="fx-canvas" aria-hidden="true"></canvas>
+  <div class="cursor-dot" aria-hidden="true"></div>
+  <div class="cursor-ring" aria-hidden="true"></div>
+
+  <!-- ===== Top bar ===== -->
+  <header class="topbar">
+    <a class="brand" href="/" data-magnetic>
+      <img src="/assets/logo.webp" alt="" width="34" height="34">
+      <span class="brand-text">JUSTICE<b>TOWN</b></span>
+    </a>
+    <div class="topbar-end">
+      <span class="dev-badge" id="dev-badge" hidden>وضع التجربة</span>
+      <a class="admin-link" id="admin-link" href="/admin" hidden data-magnetic>لوحة النتائج</a>
+      <div class="user-chip" id="user-chip" hidden>
+        <img id="user-avatar" alt="" width="30" height="30">
+        <span id="user-name"></span>
+        <button class="icon-btn" id="logout-btn" title="تسجيل الخروج" aria-label="تسجيل الخروج">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><path d="M10 17l-5-5 5-5"/><path d="M5 12h12"/></svg>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main id="app">
+    <!-- Loading -->
+    <section class="view view-loading is-active" data-view="loading">
+      <div class="loader"><span></span><span></span><span></span></div>
+    </section>
+
+    <!-- Landing -->
+    <section class="view view-landing" data-view="landing">
+      <div class="hero">
+        <div class="emblem" data-parallax="18">
+          <div class="emblem-orbit o1"></div>
+          <div class="emblem-orbit o2"></div>
+          <div class="emblem-orbit o3"><i></i></div>
+          <div class="emblem-core"><img src="/assets/logo.webp" alt="Justice Town" width="150" height="150"></div>
+        </div>
+
+        <p class="eyebrow" data-parallax="6"><span class="pulse"></span> بوابة التفعيل الرسمية</p>
+        <h1 class="hero-title" data-parallax="10">
+          <span class="split" data-text="JUSTICE"></span>
+          <span class="split outline" data-text="TOWN"></span>
+        </h1>
+        <p class="hero-sub">قبل ما تدخل المدينة، أثبت إنك تعرف قوانينها.<br>اربط حسابك، اجتز الاختبار، وتوصلك رتبتك <strong>تلقائياً</strong>.</p>
+
+        <form class="demo-login" id="demo-login" action="/auth/dev" method="get" hidden>
+          <p class="demo-note">نسخة تجريبية — اكتب اسمك وجرّب الاختبار بدون Discord</p>
+          <div class="demo-row">
+            <input name="name" id="demo-name" maxlength="32" placeholder="اسمك…" autocomplete="nickname" required>
+            <button class="btn btn-primary" type="submit" data-magnetic>دخول تجريبي</button>
+          </div>
+        </form>
+        <a class="btn btn-discord" href="/auth/login" id="login-btn" data-magnetic>
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true"><path d="M20.32 4.37A19.8 19.8 0 0 0 15.4 2.84a.07.07 0 0 0-.08.04c-.21.38-.45.87-.61 1.25a18.27 18.27 0 0 0-5.49 0 12.6 12.6 0 0 0-.62-1.25.08.08 0 0 0-.08-.04 19.74 19.74 0 0 0-4.88 1.52.07.07 0 0 0-.03.03C.53 9.05-.32 13.58.1 18.06a.08.08 0 0 0 .03.06 19.9 19.9 0 0 0 5.99 3.03.08.08 0 0 0 .08-.03c.46-.63.87-1.3 1.23-1.99a.08.08 0 0 0-.04-.11 13.1 13.1 0 0 1-1.87-.89.08.08 0 0 1-.01-.13c.13-.09.25-.19.37-.29a.07.07 0 0 1 .08-.01c3.93 1.79 8.18 1.79 12.06 0a.07.07 0 0 1 .08.01c.12.1.24.2.37.29a.08.08 0 0 1-.01.13c-.6.35-1.22.65-1.87.89a.08.08 0 0 0-.04.11c.36.7.78 1.36 1.23 1.99a.08.08 0 0 0 .08.03 19.84 19.84 0 0 0 6-3.03.08.08 0 0 0 .03-.05c.5-5.18-.84-9.67-3.55-13.66a.06.06 0 0 0-.03-.03ZM8.02 15.33c-1.18 0-2.16-1.09-2.16-2.42s.96-2.42 2.16-2.42c1.21 0 2.18 1.1 2.16 2.42 0 1.33-.96 2.42-2.16 2.42Zm7.97 0c-1.18 0-2.16-1.09-2.16-2.42s.96-2.42 2.16-2.42c1.21 0 2.18 1.1 2.16 2.42 0 1.33-.95 2.42-2.16 2.42Z"/></svg>
+          <span>تسجيل الدخول عبر Discord</span>
+        </a>
+        <p class="login-error" id="login-error" hidden></p>
+      </div>
+
+      <ol class="steps">
+        <li class="glass step" data-tilt>
+          <span class="step-no">01</span>
+          <div class="step-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></div>
+          <h3>اربط حسابك</h3>
+          <p>دخول آمن عبر Discord — ما نشوف إلا اسمك وصورتك.</p>
+        </li>
+        <li class="glass step" data-tilt>
+          <span class="step-no">02</span>
+          <div class="step-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></div>
+          <h3>اجتز الاختبار</h3>
+          <p>أسئلة عن قوانين الرول بلاي بوقت محدد.</p>
+        </li>
+        <li class="glass step" data-tilt>
+          <span class="step-no">03</span>
+          <div class="step-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l3 7h7l-5.5 4.5L18.5 21 12 16.5 5.5 21l2-7.5L2 9h7z"/></svg></div>
+          <h3>استلم رتبتك</h3>
+          <p>تنجح؟ الرتبة توصلك في Discord خلال ثواني.</p>
+        </li>
+      </ol>
+    </section>
+
+    <!-- Dashboard -->
+    <section class="view view-dash" data-view="dash">
+      <div class="dash-head">
+        <div class="avatar-ring" data-parallax="8"><img id="dash-avatar" alt="" width="84" height="84"></div>
+        <div>
+          <p class="eyebrow">أهلاً فيك</p>
+          <h2 class="dash-name" id="dash-name"></h2>
+        </div>
+      </div>
+
+      <div class="stats">
+        <div class="glass stat" data-tilt><span class="stat-k">عدد الأسئلة</span><span class="stat-v" id="st-count">—</span></div>
+        <div class="glass stat" data-tilt><span class="stat-k">الوقت</span><span class="stat-v" id="st-time">—</span></div>
+        <div class="glass stat" data-tilt><span class="stat-k">نسبة النجاح</span><span class="stat-v" id="st-pass">—</span></div>
+        <div class="glass stat" data-tilt><span class="stat-k">المحاولات المتبقية</span><span class="stat-v" id="st-left">—</span></div>
+      </div>
+
+      <!-- state panel (ready / cooldown / no attempts / ...) -->
+      <div class="glass panel" id="state-panel"></div>
+    </section>
+
+    <!-- Exam -->
+    <section class="view view-exam" data-view="exam">
+      <div class="exam-bar glass">
+        <div class="exam-progress">
+          <div class="exam-progress-text"><span>السؤال <b id="q-now">1</b> من <b id="q-total">10</b></span><span id="q-answered"></span></div>
+          <div class="bar"><i id="q-bar"></i></div>
+        </div>
+        <div class="timer" id="timer" hidden>
+          <svg viewBox="0 0 44 44"><circle class="t-bg" cx="22" cy="22" r="19"/><circle class="t-fg" id="timer-ring" cx="22" cy="22" r="19"/></svg>
+          <span id="timer-text">10:00</span>
+        </div>
+      </div>
+
+      <div class="question-stage">
+        <article class="glass question-card" id="question-card" data-tilt data-tilt-max="3">
+          <span class="q-index" id="q-index">01</span>
+          <h2 class="q-text" id="q-text"></h2>
+          <div class="options" id="options" role="radiogroup"></div>
+        </article>
+      </div>
+
+      <div class="exam-nav">
+        <button class="btn btn-ghost" id="prev-btn" data-magnetic>
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 18l6-6-6-6"/></svg> السابق
+        </button>
+        <div class="dots" id="dots"></div>
+        <button class="btn btn-primary" id="next-btn" data-magnetic>
+          <span id="next-label">التالي</span>
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M15 18l-6-6 6-6"/></svg>
+        </button>
+      </div>
+      <p class="kbd-hint">اختصار: الأرقام <kbd>1</kbd>–<kbd>4</kbd> للاختيار، والأسهم للتنقل</p>
+    </section>
+
+    <!-- Result -->
+    <section class="view view-result" data-view="result">
+      <div class="glass result-card" data-tilt data-tilt-max="4">
+        <div class="score-ring">
+          <svg viewBox="0 0 200 200">
+            <defs>
+              <linearGradient id="ring-grad" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0" stop-color="var(--ring-a)"/><stop offset="1" stop-color="var(--ring-b)"/>
+              </linearGradient>
+            </defs>
+            <circle class="r-bg" cx="100" cy="100" r="86"/>
+            <circle class="r-fg" id="score-arc" cx="100" cy="100" r="86"/>
+          </svg>
+          <div class="score-num"><b id="score-pct">0</b><span>%</span></div>
+        </div>
+        <h2 class="result-title" id="result-title"></h2>
+        <p class="result-sub" id="result-sub"></p>
+        <div class="result-meta" id="result-meta"></div>
+        <div class="result-actions" id="result-actions"></div>
+      </div>
+      <div class="review" id="review" hidden></div>
+    </section>
+  </main>
+
+  <!-- Confirm modal -->
+  <div class="modal" id="modal" hidden>
+    <div class="modal-backdrop" data-close></div>
+    <div class="glass modal-card" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <h3 id="modal-title"></h3>
+      <p id="modal-text"></p>
+      <div class="modal-actions">
+        <button class="btn btn-ghost" data-close>رجوع</button>
+        <button class="btn btn-primary" id="modal-ok">تأكيد</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toasts" id="toasts" aria-live="polite"></div>
+
+  <footer class="foot">© Justice Town Roleplay — جميع الحقوق محفوظة</footer>
+
+  <script src="/effects.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>
