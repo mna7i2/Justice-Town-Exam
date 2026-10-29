@@ -104,7 +104,7 @@
     $('#dash-name').textContent = user.name;
     $('#st-count').textContent = e.questionCount;
     $('#st-time').innerHTML = fmtMinutes(e.timeLimitMinutes);
-    $('#st-pass').innerHTML = `${e.passPercent}<small>%</small>`;
+    $('#st-pass').innerHTML = `${e.passScore}<small>من ${e.questionCount}</small>`;
     const panel = $('#state-panel');
     clearInterval(cooldownId);
     const invite = info.inviteUrl ? `<a class="btn btn-primary" href="${esc(info.inviteUrl)}" target="_blank" rel="noopener">دخول سيرفر Discord</a>` : '';
@@ -333,12 +333,12 @@
 
     $('#result-title').textContent = r.passed ? 'مبروك، نجحت! 🎉' : 'للأسف ما نجحت';
     $('#result-sub').textContent = !r.passed
-      ? r.timedOut ? 'انتهى الوقت قبل ما تخلص.' : `تحتاج ${r.passPercent}% عشان تنجح. راجع القوانين وحاول مرة ثانية.`
+      ? r.timedOut ? 'انتهى الوقت قبل ما تخلص.' : `تحتاج ${r.passScore} إجابة صحيحة من ${r.total} عشان تنجح. راجع القوانين وحاول مرة ثانية.`
       : 'نتيجتك وصلت للإدارة، وبيعطونك الرتبة في Discord على يوزرك. تأكد إنك داخل السيرفر.';
 
     $('#result-meta').innerHTML = [
       `<span class="chip">الإجابات الصحيحة: <b>${r.score}/${r.total}</b></span>`,
-      `<span class="chip">المطلوب: <b>${r.passPercent}%</b></span>`,
+      `<span class="chip">المطلوب: <b>${r.passScore}/${r.total}</b></span>`,
       r.passed ? '<span class="chip">⏳ بانتظار الإدارة</span>' : '',
     ].join('');
 

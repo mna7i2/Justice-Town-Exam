@@ -44,6 +44,8 @@ const QUESTIONS_FILE = path.join(__dirname, 'config', 'questions.json');
 const DEFAULT_SETTINGS = {
   title: 'اختبار تفعيل الرول بلاي',
   passPercent: 80,
+  // when set, passing needs this many correct answers (takes priority over passPercent)
+  passScore: 0,
   questionCount: 10,
   timeLimitMinutes: 10,
   cooldownMinutes: 60,
@@ -247,6 +249,12 @@ function sendAdminLog(action, username, adminName) {
 // ---------------------------------------------------------------------
 const SUBMIT_GRACE_MS = 60_000;
 
+// Correct answers needed to pass an exam of `total` questions
+function requiredScore(settings, total) {
+  if (settings.passScore > 0) return Math.min(settings.passScore, total);
+  return Math.ceil((settings.passPercent / 100) * total);
+}
+
 function userAttempts(userId) {
   const resetAt = store.resets[userId] || 0;
   return store.attempts.filter((a) => a.userId === userId && a.submittedAt > resetAt);
@@ -263,7 +271,8 @@ function gradeAndRecord(user, active, answers, { timedOut = false } = {}) {
   const total = graded.length;
   const percent = total ? Math.round((score / total) * 100) : 0;
   const submittedAt = now();
-  const passed = percent >= settings.passPercent;
+  const passScore = requiredScore(settings, total);
+  const passed = score >= passScore;
   const attempt = {
     id: randomId(),
     userId: user.id,
@@ -277,6 +286,7 @@ function gradeAndRecord(user, active, answers, { timedOut = false } = {}) {
     total,
     percent,
     passPercent: settings.passPercent,
+    passScore,
     passed,
     // a pass waits for an admin to give the role in Discord and mark it here
     decision: passed ? 'pending' : null,
@@ -445,11 +455,13 @@ app.post('/auth/logout', (req, res) => {
 // ----- Player API -----
 app.get('/api/me', (req, res) => {
   const { settings, rules, questions } = loadConfig();
+  const questionCount = settings.questionCount > 0 ? Math.min(settings.questionCount, questions.length) : questions.length;
   const info = {
     exam: {
       title: settings.title,
       passPercent: settings.passPercent,
-      questionCount: settings.questionCount > 0 ? Math.min(settings.questionCount, questions.length) : questions.length,
+      passScore: requiredScore(settings, questionCount),
+      questionCount,
       timeLimitMinutes: settings.timeLimitMinutes,
       maxAttempts: settings.maxAttempts,
       cooldownMinutes: settings.cooldownMinutes,
@@ -516,6 +528,7 @@ app.post('/api/exam/submit', requireUser, (req, res) => {
     total: attempt.total,
     percent: attempt.percent,
     passPercent: attempt.passPercent,
+    passScore: attempt.passScore,
     timedOut: attempt.timedOut,
     review: settings.showReview ? attempt.answers.map(({ question, options, chosen, correct }) => ({ question, options, chosen, correct })) : null,
     status: userStatus(req.user),
