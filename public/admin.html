@@ -55,17 +55,25 @@
               <button data-f="pass">ناجح</button>
               <button data-f="fail">راسب</button>
               <button data-f="role">رتبة فشلت</button>
+              <button data-f="manual">تفعيل يدوي</button>
             </div>
-            <input class="search" id="search" type="search" placeholder="ابحث بالاسم أو الآيدي…" autocomplete="off">
+            <input class="search" id="search" type="search" placeholder="ابحث باسم اللاعب أو الإداري أو الآيدي…" autocomplete="off">
           </div>
           <div class="rows" id="rows"></div>
         </div>
 
-        <aside class="glass hardest">
-          <h3>أصعب الأسئلة</h3>
-          <p class="muted">نسبة اللي جاوبوا صح</p>
-          <div id="hardest"></div>
-        </aside>
+        <div class="side">
+          <aside class="glass hardest">
+            <h3>سجل الإدارة</h3>
+            <p class="muted">مين فعّل ومين فتح محاولات</p>
+            <div id="admin-log"></div>
+          </aside>
+          <aside class="glass hardest">
+            <h3>أصعب الأسئلة</h3>
+            <p class="muted">نسبة اللي جاوبوا صح</p>
+            <div id="hardest"></div>
+          </aside>
+        </div>
       </div>
     </div>
   </main>

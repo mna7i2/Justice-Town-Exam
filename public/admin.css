@@ -14,7 +14,7 @@
 .hardest h3 { margin: 0; font-size: 18px; }
 
 .toolbar { display: flex; flex-wrap: wrap; gap: 10px; justify-content: space-between; margin-bottom: 12px; }
-.seg { display: flex; padding: 4px; border-radius: 12px; background: rgba(255, 255, 255, .04); border: 1px solid var(--line); }
+.seg { display: flex; flex-wrap: wrap; padding: 4px; border-radius: 12px; background: rgba(255, 255, 255, .04); border: 1px solid var(--line); }
 .seg button { border: 0; background: none; padding: 7px 14px; border-radius: 9px; font-size: 13px; color: var(--muted); cursor: pointer; transition: .25s; }
 .seg button.is-on { background: var(--brand); color: #fff; box-shadow: 0 0 14px rgba(91, 138, 230, .6); }
 .search { flex: 1; min-width: 180px; max-width: 320px; padding: 9px 14px; border-radius: 12px; border: 1px solid var(--line); background: rgba(255, 255, 255, .04); color: var(--text); font: inherit; font-size: 14px; outline: none; transition: border-color .25s; }
@@ -38,6 +38,20 @@
 .badge.ok { color: var(--ok); border-color: rgba(62, 224, 161, .4); background: rgba(62, 224, 161, .08); }
 .badge.bad { color: var(--bad); border-color: rgba(255, 95, 120, .4); background: rgba(255, 95, 120, .08); }
 .badge.warn { color: var(--warn); border-color: rgba(255, 194, 92, .4); background: rgba(255, 194, 92, .08); }
+.badge.staff { color: var(--brand-hi); border-color: rgba(91, 138, 230, .5); background: rgba(91, 138, 230, .12); }
+
+.side { display: grid; gap: 16px; }
+.log-item { padding: 10px 0; border-bottom: 1px solid var(--line); }
+.log-item:last-child { border-bottom: 0; }
+.log-item p { margin: 0; font-size: 13px; line-height: 1.6; }
+.log-item b { color: var(--brand-hi); font-weight: 600; }
+.log-item small { color: var(--dim); font-size: 12px; }
+
+.d-granted { margin: 0 0 14px; padding: 10px 14px; border-radius: 12px; background: rgba(91, 138, 230, .1); border: 1px solid rgba(91, 138, 230, .35); font-size: 14px; }
+.d-granted b { color: var(--brand-hi); }
+.d-history { margin: 0 0 14px; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--line); background: rgba(255, 255, 255, .02); }
+.d-history h4 { margin: 0 0 6px; font-size: 13px; color: var(--muted); font-weight: 500; }
+.d-history p { margin: 2px 0; font-size: 13px; }
 .empty { padding: 40px 10px; text-align: center; color: var(--muted); }
 
 .hq { margin-top: 14px; }

@@ -96,9 +96,6 @@
       toast('ما قدرنا نتصل بالسيرفر، حدّث الصفحة.', true);
       return;
     }
-    $('#dev-badge').hidden = !info.devMode;
-    $('#demo-login').hidden = !info.devMode;
-    $('#login-btn').hidden = info.devMode;
     if (!info.user) return show('landing');
 
     $('#user-chip').hidden = false;

@@ -15,7 +15,6 @@ const PORT = Number(env('PORT', '3000')) || 3000;
 // Render sets RENDER_EXTERNAL_URL automatically, so BASE_URL can be left empty there
 const BASE_URL = (env('BASE_URL') || env('RENDER_EXTERNAL_URL') || `http://localhost:${PORT}`).replace(/\/+$/, '');
 const SECURE_COOKIES = BASE_URL.startsWith('https://');
-const DEV = env('DEV_MODE') === 'true';
 
 const CLIENT_ID = env('DISCORD_CLIENT_ID');
 const CLIENT_SECRET = env('DISCORD_CLIENT_SECRET');
@@ -29,24 +28,19 @@ const REDIRECT_URI = `${BASE_URL}/auth/callback`;
 
 const ADMIN_IDS = new Set(env('ADMIN_IDS').split(',').map((s) => s.trim()).filter(Boolean));
 
-const DISCORD_READY = CLIENT_ID && CLIENT_SECRET && BOT_TOKEN && GUILD_ID && ROLE_ID;
-if (!DISCORD_READY && !DEV) {
-  console.error('✖ إعدادات Discord ناقصة في ملف .env (CLIENT_ID / CLIENT_SECRET / BOT_TOKEN / GUILD_ID / ROLE_ID)');
-  console.error('  تبي تجرب الموقع بدون دسكورد؟ حط DEV_MODE=true');
+const missing = ['DISCORD_CLIENT_ID', 'DISCORD_CLIENT_SECRET', 'DISCORD_BOT_TOKEN', 'DISCORD_GUILD_ID', 'DISCORD_ROLE_ID', 'SESSION_SECRET'].filter((k) => !env(k));
+if (missing.length) {
+  console.error(`✖ إعدادات ناقصة: ${missing.join(', ')}`);
+  console.error('  أضفها في Environment (على Render) أو في ملف .env');
   process.exit(1);
 }
-// Demo mode: only when Discord isn't configured. Logins and roles are fake, so it
-// switches itself off the moment real Discord keys are added.
-const SIMULATE = DEV && !DISCORD_READY;
-if (DEV && DISCORD_READY) console.warn('⚠ DEV_MODE متجاهَل لأن مفاتيح Discord موجودة — الموقع يشتغل بالوضع الحقيقي.');
-
-// A demo has nothing worth protecting, so a random per-boot secret is fine there
-const SESSION_SECRET = env('SESSION_SECRET') || (SIMULATE ? crypto.randomBytes(32).toString('hex') : '');
+const SESSION_SECRET = env('SESSION_SECRET');
 if (SESSION_SECRET.length < 24) {
-  console.error('✖ SESSION_SECRET مفقود أو قصير جداً (لازم 24 حرف على الأقل). عدّل ملف .env');
+  console.error('✖ SESSION_SECRET قصير جداً (لازم 24 حرف على الأقل)');
   process.exit(1);
 }
-const isAdmin = (id) => SIMULATE || ADMIN_IDS.has(id);
+if (!ADMIN_IDS.size) console.warn('⚠ ADMIN_IDS فاضي — ما أحد يقدر يدخل لوحة النتائج /admin');
+const isAdmin = (id) => ADMIN_IDS.has(id);
 
 // ---------------------------------------------------------------------
 //  Exam config (config/questions.json) — re-read whenever the file changes
@@ -107,7 +101,8 @@ function loadConfig() {
 // ---------------------------------------------------------------------
 const DATA_DIR = env('DATA_DIR') ? path.resolve(env('DATA_DIR')) : path.join(__dirname, 'data');
 const STORE_FILE = path.join(DATA_DIR, 'store.json');
-let store = { attempts: [], active: {}, resets: {} };
+// adminLog: who did what from the dashboard ({ action: 'grant' | 'reset', userId, by, at })
+let store = { attempts: [], active: {}, resets: {}, adminLog: [] };
 
 function loadStore() {
   fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -189,7 +184,6 @@ function formatDuration(sec) {
 //  Discord API
 // ---------------------------------------------------------------------
 const API = 'https://discord.com/api/v10';
-const demoRoleHolders = new Set(); // user ids holding the simulated role in demo mode
 
 async function discord(method, route, { body, auth = `Bot ${BOT_TOKEN}`, reason } = {}) {
   const headers = { Authorization: auth, 'User-Agent': `DiscordBot (${BASE_URL}, 1.0)` };
@@ -211,19 +205,15 @@ async function discord(method, route, { body, auth = `Bot ${BOT_TOKEN}`, reason 
 }
 
 async function getMember(userId) {
-  if (SIMULATE) return { inGuild: true, roles: demoRoleHolders.has(userId) ? [ROLE_ID] : [] };
   const r = await discord('GET', `/guilds/${GUILD_ID}/members/${userId}`);
   if (r.status === 404) return { inGuild: false, roles: [] };
   if (!r.ok) throw new Error(`Discord member lookup failed (${r.status})`);
   return { inGuild: true, roles: r.data.roles || [] };
 }
 
-async function grantRole(userId) {
-  if (SIMULATE) {
-    demoRoleHolders.add(userId);
-    return { ok: true };
-  }
-  const reason = 'Justice Town — نجح في اختبار التفعيل';
+// `by` is the admin who granted it by hand; omitted for the automatic grant on passing
+async function grantRole(userId, by = null) {
+  const reason = by ? `Justice Town — تفعيل يدوي بواسطة ${by.username} (${by.id})` : 'Justice Town — نجح في اختبار التفعيل';
   const r = await discord('PUT', `/guilds/${GUILD_ID}/members/${userId}/roles/${ROLE_ID}`, { reason });
   if (!r.ok) {
     const error =
@@ -242,8 +232,31 @@ async function grantRole(userId) {
   return { ok: true };
 }
 
+async function postLog(embed) {
+  if (!LOG_CHANNEL_ID) return;
+  const r = await discord('POST', `/channels/${LOG_CHANNEL_ID}/messages`, {
+    body: { embeds: [embed], allowed_mentions: { parse: [] } },
+  });
+  if (!r.ok) console.error('✖ إرسال الرسالة لروم اللوق فشل:', r.status, r.data);
+}
+
+// Dashboard actions (manual activation / reopening attempts), so every admin action is on record in Discord
+function sendAdminLog(action, userId, admin) {
+  const isGrant = action === 'grant';
+  return postLog({
+    title: isGrant ? '🛡 تفعيل يدوي من الإدارة' : '🔁 فتح محاولات جديدة',
+    color: isGrant ? 0x5b8ae6 : 0xffc25c,
+    fields: [
+      { name: 'اللاعب', value: `<@${userId}>`, inline: true },
+      { name: 'الإداري', value: `<@${admin.id}>\n\`${admin.username}\``, inline: true },
+    ],
+    footer: { text: 'Justice Town • نظام التفعيل' },
+    timestamp: new Date().toISOString(),
+  });
+}
+
 async function sendLog(attempt) {
-  if (SIMULATE || !LOG_CHANNEL_ID) return;
+  if (!LOG_CHANNEL_ID) return;
   const wrong = attempt.answers.filter((a) => !a.isCorrect);
   let details = wrong
     .map((a) => `• **${a.question}**\n  ↳ جاوب: ${a.chosen === null ? '— لم يجاوب —' : a.options[a.chosen]}`)
@@ -272,10 +285,7 @@ async function sendLog(attempt) {
     footer: { text: 'Justice Town • نظام التفعيل' },
     timestamp: new Date(attempt.submittedAt).toISOString(),
   };
-  const r = await discord('POST', `/channels/${LOG_CHANNEL_ID}/messages`, {
-    body: { embeds: [embed], allowed_mentions: { parse: [] } },
-  });
-  if (!r.ok) console.error('✖ إرسال النتيجة لروم اللوق فشل:', r.status, r.data);
+  await postLog(embed);
 }
 
 // ---------------------------------------------------------------------
@@ -463,7 +473,6 @@ function startSession(res, user) {
 
 // ----- Auth -----
 app.get('/auth/login', (req, res) => {
-  if (SIMULATE) return res.redirect('/auth/dev');
   const state = randomId();
   setCookie(res, 'jt_state', sign({ state, exp: now() + 10 * 60_000 }), 600);
   const params = new URLSearchParams({
@@ -508,16 +517,6 @@ app.get(
   })
 );
 
-if (SIMULATE) {
-  // Demo login: every visitor gets their own fake account under the name they typed
-  app.get('/auth/dev', (req, res) => {
-    const name = String(req.query.name || '').replace(/[<>\u0000-\u001f]/g, '').trim().slice(0, 32) || 'لاعب تجريبي';
-    const id = `9${crypto.randomInt(1e8, 1e9)}${crypto.randomInt(1e8, 1e9)}`;
-    startSession(res, { id, username: `demo_${id.slice(-4)}`, name, avatar: null });
-    res.redirect('/');
-  });
-}
-
 app.post('/auth/logout', (req, res) => {
   setCookie(res, 'jt_session', '', 0);
   res.json({ ok: true });
@@ -539,7 +538,6 @@ app.get(
         rules,
       },
       inviteUrl: INVITE_URL || null,
-      devMode: SIMULATE,
     };
     const user = currentUser(req);
     if (!user) return res.json({ ...info, user: null });
@@ -660,17 +658,22 @@ app.get('/api/admin/attempts', requireAdmin, (req, res) => {
       .map((q) => ({ ...q, rate: Math.round((q.correct / q.asked) * 100) }))
       .sort((a, b) => a.rate - b.rate)
       .slice(0, 5),
-    resets: store.resets,
+    adminLog: store.adminLog.slice().reverse(),
     attempts,
   });
 });
 
+const adminRef = (user) => ({ id: user.id, username: user.username, name: user.name });
+
 app.post('/api/admin/reset', requireAdmin, (req, res) => {
   const userId = String(req.body?.userId || '');
   if (!/^\d{5,25}$/.test(userId)) return res.status(400).json({ error: 'bad_user' });
+  const by = adminRef(req.user);
   store.resets[userId] = now();
   delete store.active[userId];
+  store.adminLog.push({ action: 'reset', userId, by, at: now() });
   saveStore();
+  sendAdminLog('reset', userId, by).catch((e) => console.error(e));
   res.json({ ok: true });
 });
 
@@ -680,10 +683,19 @@ app.post(
   wrap(async (req, res) => {
     const userId = String(req.body?.userId || '');
     if (!/^\d{5,25}$/.test(userId)) return res.status(400).json({ error: 'bad_user' });
-    const r = await grantRole(userId);
+    const by = adminRef(req.user);
+    const r = await grantRole(userId, by);
     if (r.ok) {
-      for (const a of store.attempts) if (a.userId === userId && a.passed) { a.roleGranted = true; a.roleError = null; }
+      // Credit the admin on the player's latest attempt so the results list shows who activated them
+      const latest = store.attempts.filter((a) => a.userId === userId).pop();
+      if (latest) {
+        latest.roleGranted = true;
+        latest.roleError = null;
+        latest.grantedBy = { ...by, at: now() };
+      }
+      store.adminLog.push({ action: 'grant', userId, by, at: now() });
       saveStore();
+      sendAdminLog('grant', userId, by).catch((e) => console.error(e));
     }
     res.status(r.ok ? 200 : 502).json({ ok: r.ok, error: r.error });
   })
@@ -710,5 +722,5 @@ loadStore();
 loadConfig();
 app.listen(PORT, () => {
   console.log(`\n  ⚖  Justice Town Exam شغّال على ${BASE_URL}`);
-  if (SIMULATE) console.log('  ⚠  وضع التجربة (DEV_MODE): الدخول ومنح الرتبة وهمي — لا ترفعه كذا!\n');
+  console.log(`     رابط الرجوع اللي تحطه في Discord Redirects: ${REDIRECT_URI}\n`);
 });

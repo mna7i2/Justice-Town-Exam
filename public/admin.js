@@ -50,6 +50,7 @@
     renderStats();
     renderRows();
     renderHardest();
+    renderAdminLog();
     const hash = location.hash.slice(1);
     if (hash) openAttempt(hash);
   }
@@ -73,14 +74,34 @@
       if (filter === 'pass' && !a.passed) return false;
       if (filter === 'fail' && a.passed) return false;
       if (filter === 'role' && !(a.passed && !a.roleGranted)) return false;
-      if (q && !`${a.name} ${a.username} ${a.userId}`.toLowerCase().includes(q)) return false;
+      if (filter === 'manual' && !a.grantedBy) return false;
+      if (q && !`${a.name} ${a.username} ${a.userId} ${a.grantedBy ? `${a.grantedBy.name} ${a.grantedBy.username}` : ''}`.toLowerCase().includes(q)) return false;
       return true;
     });
   }
 
+  // Who activated the player: the admin's name for a manual grant, "تلقائي" for passing the exam
   function badge(a) {
+    if (a.grantedBy) return `<span class="badge staff">🛡 فعّله: ${esc(a.grantedBy.name)}</span>`;
     if (!a.passed) return `<span class="badge bad">${a.timedOut ? 'انتهى الوقت' : 'راسب'}</span>`;
-    return a.roleGranted ? '<span class="badge ok">ناجح · الرتبة وصلت</span>' : '<span class="badge warn">ناجح · الرتبة فشلت</span>';
+    return a.roleGranted ? '<span class="badge ok">ناجح · تفعيل تلقائي</span>' : '<span class="badge warn">ناجح · الرتبة فشلت</span>';
+  }
+
+  const ACTIONS = { grant: '🛡 فعّل', reset: '🔁 فتح محاولات لـ' };
+  function playerName(userId) {
+    const a = data.attempts.find((x) => x.userId === userId);
+    return a ? a.name : userId;
+  }
+
+  function renderAdminLog() {
+    const log = data.adminLog.slice(0, 12);
+    $('#admin-log').innerHTML = log.length
+      ? log.map((l) => `
+        <div class="log-item">
+          <p><b>${esc(l.by.name)}</b> ${ACTIONS[l.action] || l.action} <b>${esc(playerName(l.userId))}</b></p>
+          <small><bdi>${fmtDate(l.at)}</bdi></small>
+        </div>`).join('')
+      : '<p class="muted">ما فيه إجراءات لين الحين.</p>';
   }
 
   function renderRows() {
@@ -117,6 +138,10 @@
         <p class="${q.isCorrect ? 'ok' : 'bad'}">${q.isCorrect ? '✔' : '✖'} جاوب: ${q.chosen === null ? '— لم يجاوب —' : esc(q.options[q.chosen])}</p>
         ${q.isCorrect ? '' : `<p class="ok">الصحيح: ${esc(q.options[q.correct])}</p>`}
       </div>`).join('');
+    const actionHistory = data.adminLog
+      .filter((l) => l.userId === a.userId)
+      .map((l) => `<p>${l.action === 'grant' ? '🛡 تفعيل يدوي' : '🔁 فتح محاولات جديدة'} — بواسطة <b>${esc(l.by.name)}</b> · <bdi>${fmtDate(l.at)}</bdi></p>`)
+      .join('');
 
     $('#drawer-body').innerHTML = `
       <div class="d-head">
@@ -131,6 +156,8 @@
         ${a.focusLost == null ? '' : `<span class="chip ${a.focusLost >= 3 ? 'bad' : ''}">طلع من الصفحة: ${a.focusLost} مرة</span>`}
         <span class="chip">${fmtDate(a.submittedAt)}</span>
       </div>
+      ${a.grantedBy ? `<p class="d-granted">🛡 فعّله يدوياً الإداري <b>${esc(a.grantedBy.name)}</b> <bdi>(@${esc(a.grantedBy.username)})</bdi> · <bdi>${fmtDate(a.grantedBy.at)}</bdi></p>` : ''}
+      ${actionHistory ? `<div class="d-history"><h4>إجراءات الإدارة على هذا اللاعب</h4>${actionHistory}</div>` : ''}
       ${a.roleError ? `<p class="bad" style="color:var(--bad);margin:0 0 14px">سبب فشل الرتبة: ${esc(a.roleError)}</p>` : ''}
       ${questions}
       <div class="d-actions">
