@@ -4,10 +4,11 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Justice Town | اختبار التفعيل</title>
-  <meta name="description" content="بوابة اختبار تفعيل الرول بلاي لسيرفر Justice Town — اربط حسابك في Discord واجتز الاختبار واستلم رتبتك بعد موافقة الإدارة.">
+  <meta name="description" content="بوابة اختبار تفعيل الرول بلاي لسيرفر Justice Town — للإدارة فقط.">
+  <meta name="robots" content="noindex, nofollow">
   <meta name="theme-color" content="#03050b">
   <meta property="og:title" content="Justice Town | اختبار التفعيل">
-  <meta property="og:description" content="اربط حسابك، اجتز الاختبار، واستلم رتبتك.">
+  <meta property="og:description" content="بوابة اختبار التفعيل — للإدارة فقط.">
   <meta property="og:image" content="/assets/logo-circle.webp">
   <link rel="icon" href="/assets/logo-circle.webp">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -29,7 +30,6 @@
     <div class="topbar-end">
       <a class="admin-link" id="admin-link" href="/admin" hidden>لوحة النتائج</a>
       <div class="user-chip" id="user-chip" hidden>
-        <img id="user-avatar" alt="" width="30" height="30">
         <span id="user-name"></span>
         <button class="icon-btn" id="logout-btn" title="تسجيل الخروج" aria-label="تسجيل الخروج">
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><path d="M10 17l-5-5 5-5"/><path d="M5 12h12"/></svg>
@@ -54,22 +54,30 @@
           <div class="emblem-core"><img src="/assets/logo.webp" alt="Justice Town" width="150" height="150"></div>
         </div>
 
-        <p class="eyebrow"><span class="pulse"></span> بوابة التفعيل الرسمية</p>
+        <p class="eyebrow"><span class="pulse"></span> بوابة التفعيل — للإدارة فقط</p>
         <h1 class="hero-title">
           <span class="split" data-text="JUSTICE"></span>
           <span class="split outline" data-text="TOWN"></span>
         </h1>
-        <p class="hero-sub">قبل ما تدخل المدينة، أثبت إنك تعرف قوانينها.<br>اكتب يوزرك، اجتز الاختبار، وبعد <strong>موافقة الإدارة</strong> توصلك رتبتك.</p>
+        <p class="hero-sub">سجّل دخولك كإداري، اكتب يوزر المواطن،<br>وشارك شاشتك معه في Discord وهو يجاوب على <strong>أسئلة التفعيل</strong>.</p>
         <form class="user-login" id="login-form" novalidate>
-          <label for="username">يوزر الدسكورد حقك</label>
+          <div class="login-grid">
+            <label>اسمك
+              <input id="admin-name" maxlength="32" autocomplete="nickname" required>
+            </label>
+            <label>آيديك في الدسكورد
+              <input id="admin-discord-id" dir="ltr" inputmode="numeric" maxlength="20" placeholder="123456789012345678" autocomplete="off" required>
+            </label>
+          </div>
+          <label for="admin-pass">كلمة سر الإدارة</label>
           <div class="user-login-row">
-            <input id="username" name="username" dir="ltr" maxlength="37" placeholder="username" autocomplete="username" autocapitalize="off" spellcheck="false" required>
+            <input id="admin-pass" type="password" autocomplete="current-password" required>
             <button class="btn btn-discord" type="submit" id="login-btn">
           <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true"><path d="M20.32 4.37A19.8 19.8 0 0 0 15.4 2.84a.07.07 0 0 0-.08.04c-.21.38-.45.87-.61 1.25a18.27 18.27 0 0 0-5.49 0 12.6 12.6 0 0 0-.62-1.25.08.08 0 0 0-.08-.04 19.74 19.74 0 0 0-4.88 1.52.07.07 0 0 0-.03.03C.53 9.05-.32 13.58.1 18.06a.08.08 0 0 0 .03.06 19.9 19.9 0 0 0 5.99 3.03.08.08 0 0 0 .08-.03c.46-.63.87-1.3 1.23-1.99a.08.08 0 0 0-.04-.11 13.1 13.1 0 0 1-1.87-.89.08.08 0 0 1-.01-.13c.13-.09.25-.19.37-.29a.07.07 0 0 1 .08-.01c3.93 1.79 8.18 1.79 12.06 0a.07.07 0 0 1 .08.01c.12.1.24.2.37.29a.08.08 0 0 1-.01.13c-.6.35-1.22.65-1.87.89a.08.08 0 0 0-.04.11c.36.7.78 1.36 1.23 1.99a.08.08 0 0 0 .08.03 19.84 19.84 0 0 0 6-3.03.08.08 0 0 0 .03-.05c.5-5.18-.84-9.67-3.55-13.66a.06.06 0 0 0-.03-.03ZM8.02 15.33c-1.18 0-2.16-1.09-2.16-2.42s.96-2.42 2.16-2.42c1.21 0 2.18 1.1 2.16 2.42 0 1.33-.96 2.42-2.16 2.42Zm7.97 0c-1.18 0-2.16-1.09-2.16-2.42s.96-2.42 2.16-2.42c1.21 0 2.18 1.1 2.16 2.42 0 1.33-.95 2.42-2.16 2.42Z"/></svg>
           <span>دخول</span>
             </button>
           </div>
-          <p class="user-login-hint">اكتب اليوزر بالضبط زي ما هو في Discord (مو الاسم الظاهر) — الإدارة بتعطيك الرتبة عليه.</p>
+          <p class="user-login-hint">الآيدي: Discord ← الإعدادات ← Advanced ← فعّل Developer Mode ← اضغط على اسمك يمين ← Copy User ID.</p>
         </form>
         <p class="login-error" id="login-error" hidden></p>
       </div>
@@ -78,20 +86,20 @@
         <li class="glass step">
           <span class="step-no">01</span>
           <div class="step-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></div>
-          <h3>اكتب يوزرك</h3>
-          <p>بس يوزر الدسكورد — بدون ربط حساب ولا كلمة سر.</p>
+          <h3>اكتب يوزر المواطن</h3>
+          <p>لو عليه تايم أوت يطلع لك مرفوض مع الوقت الباقي.</p>
         </li>
         <li class="glass step">
           <span class="step-no">02</span>
           <div class="step-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></div>
-          <h3>اجتز الاختبار</h3>
-          <p>أسئلة عن قوانين الرول بلاي بوقت محدد.</p>
+          <h3>شارك الشاشة واختبره</h3>
+          <p>30 سؤال عشوائي من القوانين، وهو يقول لك الجواب.</p>
         </li>
         <li class="glass step">
           <span class="step-no">03</span>
           <div class="step-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l3 7h7l-5.5 4.5L18.5 21 12 16.5 5.5 21l2-7.5L2 9h7z"/></svg></div>
-          <h3>استلم رتبتك</h3>
-          <p>تنجح وتوافق الإدارة؟ توصلك الرتبة في Discord.</p>
+          <h3>سلّم بآيديه</h3>
+          <p>تكتب آيدي المواطن وتسلّم — والنتيجة توصل الروم بمنشن لك وله.</p>
         </li>
       </ol>
     </section>
@@ -99,25 +107,38 @@
     <!-- Dashboard -->
     <section class="view view-dash" data-view="dash">
       <div class="dash-head">
-        <div class="avatar-ring"><img id="dash-avatar" alt="" width="84" height="84"></div>
         <div>
-          <p class="eyebrow">أهلاً فيك</p>
-          <h2 class="dash-name" id="dash-name"></h2>
+          <p class="eyebrow">أهلاً <span id="dash-admin"></span></p>
+          <h2 class="dash-name">اختبار مواطن</h2>
         </div>
       </div>
+
+      <form class="glass citizen-form" id="citizen-form" novalidate>
+        <label for="citizen-username">يوزر الدسكورد حق المواطن</label>
+        <div class="user-login-row">
+          <input id="citizen-username" dir="ltr" maxlength="37" placeholder="username" autocomplete="off" autocapitalize="off" spellcheck="false" required>
+          <button class="btn btn-primary" type="submit" id="citizen-btn">تحقق</button>
+        </div>
+        <p class="login-error" id="citizen-error" hidden></p>
+      </form>
 
       <div class="stats">
         <div class="glass stat"><span class="stat-k">عدد الأسئلة</span><span class="stat-v" id="st-count">—</span></div>
         <div class="glass stat"><span class="stat-k">الوقت</span><span class="stat-v" id="st-time">—</span></div>
         <div class="glass stat"><span class="stat-k">المطلوب للنجاح</span><span class="stat-v" id="st-pass">—</span></div>      </div>
 
-      <!-- state panel (ready / cooldown / no attempts / ...) -->
-      <div class="glass panel" id="state-panel"></div>
+      <!-- citizen status (ready / مرفوض / متفعل / in progress) -->
+      <div class="glass panel" id="state-panel" hidden></div>
     </section>
 
     <!-- Exam -->
     <section class="view view-exam" data-view="exam">
       <div class="exam-bar glass">
+        <div class="exam-who">
+          <span>المواطن</span>
+          <b dir="ltr" id="exam-citizen"></b>
+          <button class="link-btn" id="cancel-exam" type="button">إلغاء الاختبار</button>
+        </div>
         <div class="exam-progress">
           <div class="exam-progress-text"><span>السؤال <b id="q-now">1</b> من <b id="q-total">10</b></span><span id="q-answered"></span></div>
           <div class="bar"><i id="q-bar"></i></div>
@@ -184,6 +205,23 @@
         <button class="btn btn-primary" id="modal-ok">تأكيد</button>
       </div>
     </div>
+  </div>
+
+  <!-- Hand-in: locked until the citizen's Discord ID is typed -->
+  <div class="modal" id="submit-modal" hidden>
+    <div class="modal-backdrop" data-close></div>
+    <form class="glass modal-card" id="submit-form" role="dialog" aria-modal="true" aria-labelledby="submit-title" novalidate>
+      <h3 id="submit-title">تسليم الاختبار</h3>
+      <p id="submit-text"></p>
+      <label class="id-field" for="citizen-id">آيدي المواطن في الدسكورد <small>(لازم قبل التسليم)</small>
+        <input id="citizen-id" dir="ltr" inputmode="numeric" maxlength="20" placeholder="123456789012345678" autocomplete="off">
+      </label>
+      <p class="id-help">اضغط على المواطن في الدسكورد يمين ← Copy User ID</p>
+      <div class="modal-actions">
+        <button class="btn btn-ghost" type="button" data-close id="submit-back">رجوع</button>
+        <button class="btn btn-ok" type="submit" id="submit-ok" disabled>سلّم الاختبار</button>
+      </div>
+    </form>
   </div>
 
   <div class="toasts" id="toasts" aria-live="polite"></div>

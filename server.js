@@ -1,9 +1,10 @@
 // =====================================================================
 //  Justice Town — Roleplay Activation Exam
-//  The player types their Discord username → timed exam → server-side
-//  grading → result in the admin dashboard (and optionally a Discord
-//  channel via webhook). Admins sign in with a password, give the role
-//  by hand in Discord, and mark it accepted/rejected here under their name.
+//  Admins only: an admin signs in (name + Discord ID + password), types a
+//  citizen's Discord username, shares their screen in Discord and runs the
+//  timed exam with them. Handing it in needs the citizen's Discord ID; the
+//  server grades it, a pass is an activation under that admin, a fail is a
+//  72h timeout, and the webhook mentions the admin and the citizen.
 // =====================================================================
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '.env') });
@@ -217,30 +218,34 @@ async function postWebhook(embed, { content = '', ping = [] } = {}) {
   if (!res.ok) console.error('✖ إرسال الرسالة للدسكورد فشل:', res.status, await res.text().catch(() => ''));
 }
 
+// One message per finished exam: the admin who ran it, the citizen under it, and the result
 function sendResultLog(attempt) {
   const wrong = attempt.answers.filter((a) => !a.isCorrect);
   const until = timeoutUntil(attempt, loadConfig().settings);
+  const admin = attempt.conductedBy || {};
+  const label = attempt.passed ? 'المتفعل' : 'المرفوض';
+  const who = (id, text) => (id ? `${mention(id)} (${text})` : text);
   let details = wrong
     .map((a) => `• **${a.question}**\n  ↳ جاوب: ${a.chosen === null ? '— لم يجاوب —' : a.options[a.chosen]}`)
     .join('\n');
   if (details.length > 3000) details = `${details.slice(0, 3000)}\n…`;
   return postWebhook({
-    title: attempt.passed ? '📝 نجح — بانتظار إعطاء الرتبة' : '❌ مرفوض — رسب في اختبار التفعيل',
-    color: attempt.passed ? 0xffc25c : 0xff5d6c,
-    description: [
-      wrong.length ? `**الأخطاء (${wrong.length}):**\n${details}` : '**جاوب على كل الأسئلة صح** 🎯',
-      attempt.passed ? `\nأعطه الرتبة في الدسكورد، وبعدها اضغط "تم" في [لوحة النتائج](${BASE_URL}/admin#${attempt.id})` : '',
-    ].join('\n'),
+    title: attempt.passed ? '✅ نجح في اختبار التفعيل — تم تفعيله' : '❌ مرفوض — رسب في اختبار التفعيل',
+    color: attempt.passed ? 0x3ecf8e : 0xff5d6c,
+    description: wrong.length ? `**الأخطاء (${wrong.length}):**\n${details}` : '**جاوب على كل الأسئلة صح** 🎯',
     fields: [
-      { name: 'يوزر الدسكورد', value: `\`${attempt.username}\``, inline: true },
-      { name: 'النتيجة', value: `**${attempt.score}/${attempt.total}** (${attempt.percent}%)`, inline: true },
+      { name: 'الإداري', value: who(admin.discordId, admin.name || '—'), inline: false },
+      { name: label, value: who(attempt.discordId, `\`${attempt.username}\``), inline: false },
+      { name: 'النتيجة', value: `**${attempt.score}/${attempt.total}** (${attempt.percent}%) — المطلوب ${attempt.passScore}`, inline: true },
       { name: 'المدة', value: formatDuration(attempt.durationSec) + (attempt.timedOut ? ' ⏰' : ''), inline: true },
       { name: 'رقم المحاولة', value: String(attempt.attemptNo), inline: true },
-      { name: 'طلع من الصفحة', value: attempt.focusLost == null ? '—' : `${attempt.focusLost} مرة${attempt.focusLost >= 3 ? ' ⚠' : ''}`, inline: true },
-      ...(until ? [{ name: 'تايم أوت', value: `يقدر يعيد <t:${Math.floor(until / 1000)}:R>`, inline: true }] : []),
+      ...(until ? [{ name: 'تايم أوت', value: `يقدر يعيد <t:${Math.floor(until / 1000)}:R>`, inline: false }] : []),
     ],
     footer: { text: 'Justice Town • نظام التفعيل' },
     timestamp: new Date(attempt.submittedAt).toISOString(),
+  }, {
+    content: [`الإداري: ${mention(admin.discordId) || admin.name || '—'}`, `${label}: ${mention(attempt.discordId) || `\`${attempt.username}\``}`].join('\n'),
+    ping: [admin.discordId, attempt.discordId],
   });
 }
 
@@ -277,7 +282,8 @@ function sendAdminLog(action, player, admin, until = 0) {
 // ---------------------------------------------------------------------
 //  Exam logic
 // ---------------------------------------------------------------------
-const SUBMIT_GRACE_MS = 60_000;
+// time after the deadline to type the citizen's ID and hand in before the answers are dropped
+const SUBMIT_GRACE_MS = 5 * 60_000;
 
 // Correct answers needed to pass an exam of `total` questions
 function requiredScore(settings, total) {
@@ -285,7 +291,7 @@ function requiredScore(settings, total) {
   return Math.ceil((settings.passPercent / 100) * total);
 }
 
-const PLAYER_LABEL = { accept: 'المتفعل', reject: 'المرفوض', reset: 'اللاعب' };
+const PLAYER_LABEL = { accept: 'المتفعل', reject: 'المرفوض', fail: 'المرفوض', reset: 'اللاعب', cancel: 'اللاعب' };
 
 // A failed or rejected attempt locks the player out for cooldownMinutes (72 hours),
 // counted from the rejection itself when an admin rejected a pass
@@ -301,7 +307,8 @@ function userAttempts(userId) {
   return store.attempts.filter((a) => a.userId === userId && a.submittedAt > resetAt);
 }
 
-function gradeAndRecord(user, active, answers, { timedOut = false } = {}) {
+// The admin runs the exam, so a pass is an activation by that admin right away
+function gradeAndRecord(user, active, answers, { timedOut = false, discordId = null } = {}) {
   const graded = active.items.map((item) => {
     const raw = answers ? answers[item.qid] : undefined;
     const chosen = Number.isInteger(raw) && raw >= 0 && raw < item.options.length ? raw : null;
@@ -329,9 +336,10 @@ function gradeAndRecord(user, active, answers, { timedOut = false } = {}) {
     passPercent: settings.passPercent,
     passScore,
     passed,
-    // a pass waits for an admin to give the role in Discord and mark it here
-    decision: passed ? 'pending' : null,
-    decidedBy: null,
+    discordId,
+    conductedBy: active.conductedBy || null,
+    decision: passed ? 'accepted' : null,
+    decidedBy: passed && active.conductedBy ? { ...active.conductedBy, at: submittedAt } : null,
     timedOut,
     attemptNo: userAttempts(user.id).length + 1,
     answers: graded,
@@ -346,6 +354,7 @@ function expireActive(user) {
   if (active && active.deadline && now() > active.deadline + SUBMIT_GRACE_MS) {
     const attempt = gradeAndRecord(user, active, null, { timedOut: true });
     store.attempts.push(attempt);
+    store.adminLog.push({ action: 'fail', userId: user.id, username: user.username, by: attempt.conductedBy || { name: '—' }, at: now() });
     saveStore();
     sendResultLog(attempt).catch((e) => console.error(e));
   }
@@ -405,7 +414,7 @@ app.use(express.json({ limit: '32kb' }));
 
 app.use((req, res, next) => {
   if (SECURE_COOKIES) res.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
-  if (req.path.startsWith('/api') || req.path.startsWith('/auth')) res.set('Cache-Control', 'no-store');
+  if (req.path.startsWith('/api')) res.set('Cache-Control', 'no-store');
   res.set({
     'X-Content-Type-Options': 'nosniff',
     'X-Frame-Options': 'DENY',
@@ -453,26 +462,17 @@ function rateLimit(bucket, limit) {
     next();
   };
 }
-app.use(['/api', '/auth'], rateLimit('all', 90));
-app.use(['/api/exam', '/api/admin/decide', '/api/admin/reset', '/auth/login'], rateLimit('action', 20));
+app.use('/api', rateLimit('all', 120));
+app.use(['/api/exam', '/api/citizen', '/api/admin/decide', '/api/admin/reset'], rateLimit('action', 40));
 app.use('/api/admin/login', rateLimit('admin-login', 5));
 setInterval(() => { const t = now(); for (const [k, v] of hits) if (t > v.reset) hits.delete(k); }, 120_000).unref();
 
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
-function currentUser(req) {
-  return unsign(parseCookies(req).jt_session);
-}
 function currentAdmin(req) {
   const admin = ADMIN_PASSWORD ? unsign(parseCookies(req).jt_admin) : null;
   // sessions from before admin Discord IDs existed must sign in again
   return admin && admin.discordId ? admin : null;
-}
-function requireUser(req, res, next) {
-  const user = currentUser(req);
-  if (!user) return res.status(401).json({ error: 'not_logged_in' });
-  req.user = user;
-  next();
 }
 function requireAdmin(req, res, next) {
   const admin = currentAdmin(req);
@@ -481,51 +481,55 @@ function requireAdmin(req, res, next) {
   next();
 }
 
-// ----- Player login (Discord username, no linking) -----
-app.post('/auth/login', (req, res) => {
+// The citizen never signs in: the admin types their Discord username and runs the exam
+// on their own screen (shared in Discord), so every exam route needs an admin
+function requireCitizen(req, res, next) {
   const username = cleanUsername(req.body?.username);
   if (!username) return res.status(400).json({ error: 'bad_username' });
-  const session = { id: userIdFor(username), username, exp: now() + 7 * 86400_000 };
-  setCookie(res, 'jt_session', sign(session), 7 * 86400);
-  res.json({ ok: true });
-});
+  req.citizen = { id: userIdFor(username), username };
+  next();
+}
 
-app.post('/auth/logout', (req, res) => {
-  setCookie(res, 'jt_session', '', 0);
-  res.json({ ok: true });
-});
+function citizenInfo(citizen) {
+  const attempts = userAttempts(citizen.id);
+  const accepted = attempts.find((a) => a.decision === 'accepted');
+  return {
+    username: citizen.username,
+    avatar: avatarUrl(citizen.username),
+    status: userStatus(citizen),
+    activatedBy: accepted?.decidedBy ? { name: accepted.decidedBy.name, at: accepted.decidedBy.at } : null,
+  };
+}
 
-// ----- Player API -----
 app.get('/api/me', (req, res) => {
   const { settings, rules, questions } = loadConfig();
   const questionCount = settings.questionCount > 0 ? Math.min(settings.questionCount, questions.length) : questions.length;
-  const info = {
+  const admin = currentAdmin(req);
+  res.json({
     exam: {
       title: settings.title,
       passPercent: settings.passPercent,
       passScore: requiredScore(settings, questionCount),
       questionCount,
       timeLimitMinutes: settings.timeLimitMinutes,
-      maxAttempts: settings.maxAttempts,
       cooldownMinutes: settings.cooldownMinutes,
       rules,
     },
-    inviteUrl: INVITE_URL || null,
-  };
-  const user = currentUser(req);
-  if (!user) return res.json({ ...info, user: null });
-  res.json({
-    ...info,
-    user: { id: user.id, username: user.username, name: user.username, avatar: avatarUrl(user.username) },
-    status: userStatus(user),
+    adminEnabled: Boolean(ADMIN_PASSWORD),
+    admin: admin ? { name: admin.name, discordId: admin.discordId } : null,
   });
 });
 
-app.post('/api/exam/start', requireUser, (req, res) => {
-  const status = userStatus(req.user);
-  const existing = store.active[req.user.id];
+// Look up a citizen before starting: shows "مرفوض" with the time left if they're in a timeout
+app.post('/api/citizen/check', requireAdmin, requireCitizen, (req, res) => {
+  res.json(citizenInfo(req.citizen));
+});
+
+app.post('/api/exam/start', requireAdmin, requireCitizen, (req, res) => {
+  const status = userStatus(req.citizen);
+  const existing = store.active[req.citizen.id];
   if (existing) return res.json(examPayload(existing));
-  if (status.state !== 'ready') return res.status(403).json({ error: status.state });
+  if (status.state !== 'ready') return res.status(403).json({ error: status.state, ...citizenInfo(req.citizen) });
 
   const { settings, questions } = loadConfig();
   let picked = settings.shuffleQuestions ? shuffle(questions) : questions.slice();
@@ -536,37 +540,57 @@ app.post('/api/exam/start', requireUser, (req, res) => {
     examId: randomId(),
     startedAt: t,
     deadline: settings.timeLimitMinutes > 0 ? t + settings.timeLimitMinutes * 60_000 : null,
+    conductedBy: { name: req.admin.name, discordId: req.admin.discordId },
     // Snapshot the questions so editing questions.json mid-exam can't break grading
     items: picked.map((q) => {
       const order = settings.shuffleOptions ? shuffle(q.options.map((_, i) => i)) : q.options.map((_, i) => i);
       return { qid: q.id, question: q.question, options: order.map((i) => q.options[i]), correct: order.indexOf(q.correct) };
     }),
   };
-  store.active[req.user.id] = active;
+  store.active[req.citizen.id] = active;
   saveStore();
   res.json(examPayload(active));
 });
 
-app.post('/api/exam/submit', requireUser, (req, res) => {
-  const active = store.active[req.user.id];
-  const { examId, answers, focusLost } = req.body || {};
+// Stops an exam without recording it (e.g. the citizen dropped from the call)
+app.post('/api/exam/cancel', requireAdmin, requireCitizen, (req, res) => {
+  if (!store.active[req.citizen.id]) return res.status(409).json({ error: 'no_active_exam' });
+  delete store.active[req.citizen.id];
+  store.adminLog.push({ action: 'cancel', userId: req.citizen.id, username: req.citizen.username, by: { name: req.admin.name, discordId: req.admin.discordId }, at: now() });
+  saveStore();
+  res.json({ ok: true });
+});
+
+app.post('/api/exam/submit', requireAdmin, requireCitizen, (req, res) => {
+  const active = store.active[req.citizen.id];
+  const { examId, answers } = req.body || {};
   if (typeof examId !== 'string' || !active || active.examId !== examId) return res.status(409).json({ error: 'no_active_exam' });
+  // the exam can't be handed in until the admin types the citizen's Discord ID
+  const discordId = cleanDiscordId(req.body?.playerDiscordId);
+  if (!discordId) return res.status(400).json({ error: 'player_id_required' });
   const cleanAnswers = answers && typeof answers === 'object' && !Array.isArray(answers) ? answers : {};
 
   const late = active.deadline && now() > active.deadline + SUBMIT_GRACE_MS;
   const timedOut = Boolean(active.deadline && now() > active.deadline);
-  const attempt = gradeAndRecord(req.user, active, late ? null : cleanAnswers, { timedOut });
-  // Client-reported count of times the player left the exam tab (anti-cheat hint for admins)
-  attempt.focusLost = Number.isInteger(focusLost) ? Math.min(Math.max(focusLost, 0), 999) : null;
+  // whoever hands it in is the admin on record
+  active.conductedBy = { name: req.admin.name, discordId: req.admin.discordId };
+  const attempt = gradeAndRecord(req.citizen, active, late ? null : cleanAnswers, { timedOut, discordId });
 
   store.attempts.push(attempt);
+  store.adminLog.push({
+    action: attempt.passed ? 'accept' : 'fail',
+    userId: attempt.userId,
+    username: attempt.username,
+    playerDiscordId: discordId,
+    by: attempt.conductedBy,
+    at: now(),
+  });
   saveStore();
   sendResultLog(attempt).catch((e) => console.error(e));
 
   const { settings } = loadConfig();
   res.json({
     passed: attempt.passed,
-    pending: attempt.decision === 'pending',
     score: attempt.score,
     total: attempt.total,
     percent: attempt.percent,
@@ -574,7 +598,7 @@ app.post('/api/exam/submit', requireUser, (req, res) => {
     passScore: attempt.passScore,
     timedOut: attempt.timedOut,
     review: settings.showReview ? attempt.answers.map(({ question, options, chosen, correct }) => ({ question, options, chosen, correct })) : null,
-    status: userStatus(req.user),
+    citizen: citizenInfo(req.citizen),
   });
 });
 

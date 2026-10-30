@@ -1,5 +1,6 @@
 /* =====================================================================
-   Exam client — views, exam flow, timer, result.
+   Exam client (admins only) — sign in, look up a citizen, run the exam
+   on a shared screen, hand it in with the citizen's Discord ID.
    ===================================================================== */
 (() => {
   const $ = (s, el = document) => el.querySelector(s);
@@ -11,8 +12,10 @@
     lock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>',
     check: '<svg viewBox="0 0 24 24"><path d="M5 12l5 5L20 7"/></svg>',
   };
+  const CITIZEN_KEY = 'jt_citizen';
 
   let info = null;         // /api/me payload
+  let citizen = null;      // looked-up citizen { username, status, activatedBy }
   let exam = null;         // active exam
   let answers = {};        // qid -> option index
   let current = 0;
@@ -20,10 +23,13 @@
   let cooldownId = null;
   let clockSkew = 0;
   let submitting = false;
-  let focusLost = 0;       // times the player left the exam tab
 
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const pad = (n) => String(n).padStart(2, '0');
+  const isDiscordId = (v) => /^\d{17,20}$/.test(v);
+  const fmtDate = (t) => new Date(t).toLocaleString('ar-SA-u-nu-latn', { dateStyle: 'medium', timeStyle: 'short' });
+  const remember = (name) => { try { name ? sessionStorage.setItem(CITIZEN_KEY, name) : sessionStorage.removeItem(CITIZEN_KEY); } catch {} };
+  const remembered = () => { try { return sessionStorage.getItem(CITIZEN_KEY); } catch { return null; } };
 
   // ---------------- API ----------------
   async function api(path, body) {
@@ -34,6 +40,10 @@
       credentials: 'same-origin',
     });
     const data = await res.json().catch(() => ({}));
+    if (res.status === 401 && path !== '/api/admin/login') {
+      exam = null;
+      boot();
+    }
     if (!res.ok) throw Object.assign(new Error(data.error || 'request_failed'), { status: res.status, data });
     return data;
   }
@@ -87,41 +97,76 @@
       toast('ما قدرنا نتصل بالسيرفر، حدّث الصفحة.', true);
       return;
     }
-    if (!info.user) return show('landing');
+    if (!info.admin) {
+      $('#user-chip').hidden = true;
+      $('#admin-link').hidden = true;
+      if (!info.adminEnabled) showLoginError('الموقع مقفل — لازم تحط ADMIN_PASSWORD في Environment على Render.');
+      return show('landing');
+    }
 
     $('#user-chip').hidden = false;
-    $('#user-avatar').src = info.user.avatar;
-    $('#user-name').textContent = info.user.name;
+    $('#admin-link').hidden = false;
+    $('#user-name').textContent = info.admin.name;
+    $('#dash-admin').textContent = info.admin.name;
+    $('#st-count').textContent = info.exam.questionCount;
+    $('#st-time').innerHTML = fmtMinutes(info.exam.timeLimitMinutes);
+    $('#st-pass').innerHTML = `${info.exam.passScore}<small>من ${info.exam.questionCount}</small>`;
+    show('dash');
 
-    if (info.status.state === 'in_progress') return startExam(true);
-    renderDash();
+    // after a refresh, pick up the citizen the admin was testing
+    const name = remembered();
+    if (name) {
+      $('#citizen-username').value = name;
+      await checkCitizen(name, true);
+    }
   }
 
-  // ---------------- Dashboard ----------------
-  function renderDash() {
-    const { exam: e, status, user } = info;
-    $('#dash-avatar').src = user.avatar;
-    $('#dash-name').textContent = user.name;
-    $('#st-count').textContent = e.questionCount;
-    $('#st-time').innerHTML = fmtMinutes(e.timeLimitMinutes);
-    $('#st-pass').innerHTML = `${e.passScore}<small>من ${e.questionCount}</small>`;
+  function showLoginError(msg) {
+    const err = $('#login-error');
+    err.textContent = msg;
+    err.hidden = !msg;
+  }
+
+  // ---------------- Citizen lookup ----------------
+  async function checkCitizen(username, resume = false) {
+    const err = $('#citizen-error');
+    err.hidden = true;
+    try {
+      citizen = await api('/api/citizen/check', { username });
+    } catch (e) {
+      citizen = null;
+      remember(null);
+      $('#state-panel').hidden = true;
+      err.textContent = e.message === 'bad_username' ? 'اليوزر غلط — حروف إنجليزية وأرقام و _ و . بس (بدون مسافات).' : 'ما قدرنا نتحقق، جرّب مرة ثانية.';
+      err.hidden = false;
+      return;
+    }
+    remember(citizen.username);
+    if (resume && citizen.status.state === 'in_progress') return startExam(true);
+    renderCitizen();
+  }
+
+  function renderCitizen() {
+    const { exam: e } = info;
+    const { status } = citizen;
     const panel = $('#state-panel');
+    const name = `<b dir="ltr">${esc(citizen.username)}</b>`;
     clearInterval(cooldownId);
-    const invite = info.inviteUrl ? `<a class="btn btn-primary" href="${esc(info.inviteUrl)}" target="_blank" rel="noopener">دخول سيرفر Discord</a>` : '';
+    panel.hidden = false;
 
     switch (status.state) {
       case 'ready': {
         const rules = e.rules.length ? `<ul class="rules">${e.rules.map((r) => `<li>${esc(r)}</li>`).join('')}</ul>` : '';
         panel.innerHTML = `
           <div class="panel-icon">${ICONS.play}</div>
-          <h3>${esc(e.title)}</h3>
-          <p>اقرأ التعليمات زين قبل لا تبدأ — أول ما تضغط "ابدأ" يشتغل العداد.</p>
+          <h3>${name} جاهز للاختبار</h3>
+          <p>شارك شاشتك معه في الدسكورد واقرأ عليه التعليمات قبل لا تبدأ — أول ما تضغط "ابدأ" يشتغل العداد.</p>
           ${rules}
-          <label class="agree"><input type="checkbox" id="agree"><span class="box">${ICONS.check}</span><span>قرأت التعليمات وأتعهد إني أحل الاختبار بنفسي</span></label>
+          <label class="agree"><input type="checkbox" id="agree"><span class="box">${ICONS.check}</span><span>شاركت الشاشة مع المواطن وقرأت عليه التعليمات</span></label>
           <div class="panel-actions"><button class="btn btn-primary" id="start-btn" disabled>ابدأ الاختبار</button></div>`;
         $('#agree').addEventListener('change', (ev) => { $('#start-btn').disabled = !ev.target.checked; });
         $('#start-btn').addEventListener('click', async () => {
-          const ok = await confirmModal('جاهز؟', `عندك ${e.questionCount} سؤال${e.timeLimitMinutes ? ` و ${e.timeLimitMinutes} دقيقة` : ''}. ما تقدر توقف العداد بعد ما تبدأ.`, 'ابدأ');
+          const ok = await confirmModal('جاهز؟', `${e.questionCount} سؤال${e.timeLimitMinutes ? ` و ${e.timeLimitMinutes} دقيقة` : ''}. ما تقدر توقف العداد بعد ما تبدأ.`, 'ابدأ');
           if (ok) startExam(false);
         });
         break;
@@ -129,27 +174,37 @@
       case 'accepted':
         panel.innerHTML = `
           <div class="panel-icon ok">${ICONS.ok}</div>
-          <h3>تم تفعيلك ✔</h3>
-          <p>الإدارة أعطتك الرتبة في Discord على يوزر <b dir="ltr">${esc(user.username)}</b>. نشوفك في المدينة!</p>
-          <div class="panel-actions">${invite}</div>`;
+          <h3>✅ ${name} متفعل من قبل</h3>
+          <p>${citizen.activatedBy ? `فعّله الإداري <b>${esc(citizen.activatedBy.name)}</b> · <bdi>${fmtDate(citizen.activatedBy.at)}</bdi>` : 'نجح في الاختبار من قبل.'}</p>`;
         break;
       case 'pending_review':
         panel.innerHTML = `
           <div class="panel-icon warn">${ICONS.clock}</div>
-          <h3>نجحت! 🎉 طلبك عند الإدارة</h3>
-          <p>الإدارة بتعطيك الرتبة في Discord على يوزر <b dir="ltr">${esc(user.username)}</b>. تأكد إنك داخل السيرفر — ما تحتاج تسوي شي ثاني.</p>
-          <div class="panel-actions">${invite}<button class="btn btn-ghost" id="recheck">تحديث الحالة</button></div>`;
-        $('#recheck').addEventListener('click', refresh);
+          <h3>${name} نجح ومعلّق</h3>
+          <p>عنده نتيجة ناجحة قديمة ما انقرر فيها. افتحها من <a href="/admin">لوحة النتائج</a> وقرر فيها.</p>`;
+        break;
+      case 'in_progress':
+        panel.innerHTML = `
+          <div class="panel-icon warn">${ICONS.clock}</div>
+          <h3>${name} عنده اختبار شغّال</h3>
+          <p>كمّل الاختبار من حيث وقف، أو ألغه لو انقطع المواطن.</p>
+          <div class="panel-actions">
+            <button class="btn btn-primary" id="resume-btn">كمّل الاختبار</button>
+            <button class="btn btn-ghost" id="cancel-btn">إلغاء الاختبار</button>
+          </div>`;
+        $('#resume-btn').addEventListener('click', () => startExam(true));
+        $('#cancel-btn').addEventListener('click', cancelExam);
         break;
       case 'cooldown': {
+        const last = status.lastAttempt;
         panel.innerHTML = `
-          <div class="panel-icon bad">${ICONS.clock}</div>
-          <h3>❌ مرفوض</h3>
-          <p>${status.lastAttempt?.rejected ? 'راجعت الإدارة نتيجتك ورفضت طلبك' : `ما نجحت في الاختبار — نتيجتك كانت <b>${status.lastAttempt?.percent ?? 0}%</b>${status.lastAttempt?.timedOut ? ' (انتهى الوقت)' : ''}`}. عليك تايم أوت، راجع القوانين وتقدر تعيد بعد:</p>
+          <div class="panel-icon bad">${ICONS.lock}</div>
+          <h3>❌ ${name} مرفوض</h3>
+          <p>${last?.rejected ? 'رفضته الإدارة' : `رسب في آخر اختبار — نتيجته كانت <b>${last?.percent ?? 0}%</b>${last?.timedOut ? ' (انتهى الوقت)' : ''}`}. عليه تايم أوت، يقدر يعيد بعد:</p>
           <div class="countdown" id="countdown"></div>`;
         const tick = () => {
           const left = Math.max(0, status.cooldownUntil - Date.now());
-          if (!left) { clearInterval(cooldownId); refresh(); return; }
+          if (!left) { clearInterval(cooldownId); checkCitizen(citizen.username); return; }
           const h = Math.floor(left / 3600000), m = Math.floor((left % 3600000) / 60000), s = Math.floor((left % 60000) / 1000);
           $('#countdown').innerHTML = `<div><b>${pad(h)}</b><span>ساعة</span></div><div><b>${pad(m)}</b><span>دقيقة</span></div><div><b>${pad(s)}</b><span>ثانية</span></div>`;
         };
@@ -160,54 +215,71 @@
       case 'no_attempts':
         panel.innerHTML = `
           <div class="panel-icon bad">${ICONS.lock}</div>
-          <h3>خلصت محاولاتك</h3>
-          <p>استخدمت كل المحاولات المسموحة. تواصل مع الإدارة في Discord عشان يفتحون لك محاولة جديدة.</p>
-          <div class="panel-actions">${invite}</div>`;
+          <h3>❌ ${name} خلصت محاولاته</h3>
+          <p>تقدر تفتح له محاولات جديدة من <a href="/admin">لوحة النتائج</a>.</p>`;
         break;
       default:
-        panel.innerHTML = `<h3>صار خطأ</h3><p>حدّث الصفحة.</p>`;
+        panel.innerHTML = '<h3>صار خطأ</h3><p>حدّث الصفحة.</p>';
     }
-    show('dash');
   }
 
-  async function refresh() {
-    try {
-      info = await api('/api/me');
-      if (!info.user) return show('landing');
-      renderDash();
-    } catch {
-      toast('ما قدرنا نحدّث، جرّب مرة ثانية.', true);
-    }
+  function backToDash() {
+    exam = null;
+    clearInterval(timerId);
+    show('dash');
+    if (citizen) checkCitizen(citizen.username);
+  }
+
+  function newCitizen() {
+    citizen = null;
+    remember(null);
+    clearInterval(cooldownId);
+    $('#state-panel').hidden = true;
+    $('#citizen-username').value = '';
+    show('dash');
+    $('#citizen-username').focus();
   }
 
   // ---------------- Exam ----------------
   const storeKey = () => `jt_answers_${exam.examId}`;
-  const saveAnswers = () => { try { sessionStorage.setItem(storeKey(), JSON.stringify({ answers, current, focusLost })); } catch {} };
+  const saveAnswers = () => { try { sessionStorage.setItem(storeKey(), JSON.stringify({ answers, current })); } catch {} };
 
   async function startExam(resume) {
     try {
-      exam = await api('/api/exam/start', {});
+      exam = await api('/api/exam/start', { username: citizen.username });
     } catch (e) {
-      toast(e.message === 'cooldown' ? 'لازم تنتظر قبل المحاولة الجاية.' : 'ما قدرنا نبدأ الاختبار.', true);
-      return refresh();
+      if (e.status !== 401) toast(e.message === 'cooldown' ? 'المواطن مرفوض وعليه تايم أوت.' : 'ما قدرنا نبدأ الاختبار.', true);
+      exam = null;
+      return citizen && checkCitizen(citizen.username);
     }
     clockSkew = exam.serverNow - Date.now();
     answers = {};
     current = 0;
-    focusLost = 0;
     try {
       const saved = JSON.parse(sessionStorage.getItem(storeKey()) || 'null');
-      if (saved) { answers = saved.answers || {}; current = Math.min(saved.current || 0, exam.questions.length - 1); focusLost = saved.focusLost || 0; }
+      if (saved) { answers = saved.answers || {}; current = Math.min(saved.current || 0, exam.questions.length - 1); }
     } catch {}
-    if (resume) focusLost++;
-    if (resume) toast('رجعناك لاختبارك اللي بديته.');
+    if (resume) toast('رجعناك للاختبار من حيث وقف.');
 
+    $('#exam-citizen').textContent = citizen.username;
     $('#q-total').textContent = exam.questions.length;
-    const dots = $('#dots');
-    dots.innerHTML = exam.questions.map((_, i) => `<button class="dot" data-i="${i}" aria-label="السؤال ${i + 1}">${i + 1}</button>`).join('');
+    $('#dots').innerHTML = exam.questions.map((_, i) => `<button class="dot" data-i="${i}" aria-label="السؤال ${i + 1}">${i + 1}</button>`).join('');
     show('exam');
     renderQuestion(null);
     startTimer();
+  }
+
+  async function cancelExam() {
+    const ok = await confirmModal('إلغاء الاختبار؟', `بينحذف اختبار ${citizen.username} وما ينحسب له ولا عليه. تقدر تبدأ له اختبار جديد بعدها.`, 'إلغاء الاختبار');
+    if (!ok) return;
+    try {
+      await api('/api/exam/cancel', { username: citizen.username });
+      try { if (exam) sessionStorage.removeItem(storeKey()); } catch {}
+      toast('تم إلغاء الاختبار.');
+    } catch {
+      toast('ما قدرنا نلغي الاختبار.', true);
+    }
+    backToDash();
   }
 
   function renderQuestion(direction) {
@@ -237,7 +309,7 @@
     const total = exam.questions.length;
     const answered = exam.questions.filter((q) => answers[q.qid] !== undefined).length;
     $('#q-now').textContent = current + 1;
-    $('#q-answered').textContent = `جاوبت ${answered} من ${total}`;
+    $('#q-answered').textContent = `جاوب ${answered} من ${total}`;
     $('#q-bar').style.width = `${(answered / total) * 100}%`;
     $('#prev-btn').disabled = current === 0;
     const last = current === total - 1;
@@ -270,33 +342,55 @@
     renderQuestion(delta > 0 ? 'next' : 'prev');
   }
 
-  async function finish(auto = false) {
-    if (submitting) return;
-    if (!auto) {
-      const missing = exam.questions.filter((q) => answers[q.qid] === undefined).length;
-      const ok = await confirmModal(
-        'تسليم الاختبار؟',
-        missing ? `باقي ${missing} سؤال ما جاوبت عليه، وبينحسب غلط. متأكد تسلّم؟` : 'جاوبت على كل الأسئلة. ما تقدر تغيّر إجاباتك بعد التسليم.',
-        'سلّم'
-      );
-      if (!ok) return;
-    }
+  // Handing in always goes through this modal: no citizen ID, no hand-in
+  function openSubmit(timeUp = false) {
+    if (submitting || !exam) return;
+    const missing = exam.questions.filter((q) => answers[q.qid] === undefined).length;
+    $('#submit-title').textContent = timeUp ? '⏰ انتهى الوقت' : 'تسليم الاختبار';
+    $('#submit-text').textContent = timeUp
+      ? 'انتهى وقت الاختبار. اكتب آيدي المواطن وسلّم خلال 5 دقايق وإلا تنحذف إجاباته.'
+      : missing ? `باقي ${missing} سؤال ما جاوب عليه، وبينحسب غلط.` : 'جاوب على كل الأسئلة. ما تقدر تغيّر الإجابات بعد التسليم.';
+    $('#submit-back').hidden = timeUp;
+    $('#submit-modal').dataset.locked = timeUp ? '1' : '';
+    $('#submit-ok').disabled = !isDiscordId($('#citizen-id').value);
+    $('#submit-modal').hidden = false;
+    $('#citizen-id').focus();
+  }
+  function closeSubmit() {
+    if ($('#submit-modal').dataset.locked) return;
+    $('#submit-modal').hidden = true;
+  }
+
+  $('#citizen-id').addEventListener('input', (e) => {
+    e.target.value = e.target.value.replace(/\D/g, '');
+    $('#submit-ok').disabled = !isDiscordId(e.target.value);
+  });
+  $('#submit-modal').addEventListener('click', (e) => { if (e.target.closest('[data-close]')) closeSubmit(); });
+
+  $('#submit-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const playerDiscordId = $('#citizen-id').value.trim();
+    if (!isDiscordId(playerDiscordId) || submitting || !exam) return;
     submitting = true;
-    clearInterval(timerId);
-    $('#next-btn').disabled = true;
+    $('#submit-ok').disabled = true;
     try {
-      const result = await api('/api/exam/submit', { examId: exam.examId, answers, focusLost });
+      const result = await api('/api/exam/submit', { username: citizen.username, examId: exam.examId, answers, playerDiscordId });
       try { sessionStorage.removeItem(storeKey()); } catch {}
-      info.status = result.status;
+      clearInterval(timerId);
+      $('#submit-modal').dataset.locked = '';
+      $('#submit-modal').hidden = true;
+      $('#citizen-id').value = '';
+      citizen = result.citizen;
       showResult(result);
-    } catch (e) {
-      toast('صار خطأ أثناء التسليم، جرّب مرة ثانية.', true);
-      $('#next-btn').disabled = false;
-      if (e.status === 409) refresh();
+    } catch (err) {
+      if (err.message === 'player_id_required') toast('الآيدي غلط — لازم يكون أرقام بس (17 إلى 20 رقم).', true);
+      else if (err.status === 409) { toast('الاختبار هذا انتهى أو انلغى.', true); $('#submit-modal').dataset.locked = ''; $('#submit-modal').hidden = true; backToDash(); }
+      else if (err.status !== 401) toast('صار خطأ أثناء التسليم، جرّب مرة ثانية.', true);
+      $('#submit-ok').disabled = !isDiscordId($('#citizen-id').value);
     } finally {
       submitting = false;
     }
-  }
+  });
 
   function startTimer() {
     const t = $('#timer');
@@ -314,8 +408,7 @@
       t.classList.toggle('is-low', left < 60000);
       if (left <= 0) {
         clearInterval(timerId);
-        toast('انتهى الوقت! تم تسليم إجاباتك تلقائياً.');
-        finish(true);
+        openSubmit(true);
       }
     };
     tick();
@@ -331,21 +424,18 @@
     $('#score-pct').textContent = '0';
     $('#score-arc').style.strokeDashoffset = '540.35';
 
-    $('#result-title').textContent = r.passed ? 'مبروك، نجحت! 🎉' : '❌ مرفوض';
-    $('#result-sub').textContent = !r.passed
-      ? `${r.timedOut ? 'انتهى الوقت قبل ما تخلص.' : `تحتاج ${r.passScore} إجابة صحيحة من ${r.total} عشان تنجح.`}${r.status?.cooldownUntil ? ` عليك تايم أوت ${Math.round((r.status.cooldownUntil - Date.now()) / 3600000)} ساعة قبل ما تقدر تعيد.` : ''}`
-      : 'نتيجتك وصلت للإدارة، وبيعطونك الرتبة في Discord على يوزرك. تأكد إنك داخل السيرفر.';
+    const name = r.citizen.username;
+    const until = r.citizen.status.cooldownUntil;
+    $('#result-title').textContent = r.passed ? `✅ نجح — تم تفعيل ${name}` : `❌ ${name} مرفوض`;
+    $('#result-sub').textContent = r.passed
+      ? 'انسجل التفعيل باسمك، ووصلت النتيجة للروم بمنشن لك وله. أعطه الرتبة في الدسكورد.'
+      : `${r.timedOut ? 'انتهى الوقت قبل ما يخلص.' : `يحتاج ${r.passScore} إجابة صحيحة من ${r.total} عشان ينجح.`}${until ? ` عليه تايم أوت ${Math.round((until - Date.now()) / 3600000)} ساعة قبل ما يقدر يعيد.` : ''}`;
 
     $('#result-meta').innerHTML = [
       `<span class="chip">الإجابات الصحيحة: <b>${r.score}/${r.total}</b></span>`,
       `<span class="chip">المطلوب: <b>${r.passScore}/${r.total}</b></span>`,
-      r.passed ? '<span class="chip">⏳ بانتظار الإدارة</span>' : '',
     ].join('');
-
-    const invite = info.inviteUrl ? `<a class="btn btn-ok" href="${esc(info.inviteUrl)}" target="_blank" rel="noopener">افتح Discord</a>` : '';
-    $('#result-actions').innerHTML = r.passed
-      ? `${invite}<button class="btn btn-ghost" data-act="dash">الرجوع للرئيسية</button>`
-      : `<button class="btn btn-primary" data-act="dash">الرجوع للرئيسية</button>`;
+    $('#result-actions').innerHTML = '<button class="btn btn-primary" data-act="new">اختبار مواطن جديد</button>';
 
     const review = $('#review');
     if (r.review) {
@@ -354,7 +444,7 @@
         const right = q.chosen === q.correct;
         return `<div class="glass review-item">
           <h4>${i + 1}. ${esc(q.question)}</h4>
-          <p class="${right ? 'ok' : 'bad'}">${right ? '✔' : '✖'} إجابتك: ${q.chosen === null ? 'لم تجاوب' : esc(q.options[q.chosen])}</p>
+          <p class="${right ? 'ok' : 'bad'}">${right ? '✔' : '✖'} جوابه: ${q.chosen === null ? 'لم يجاوب' : esc(q.options[q.chosen])}</p>
           ${right ? '' : `<p class="ok">الإجابة الصحيحة: ${esc(q.options[q.correct])}</p>`}
         </div>`;
       }).join('');
@@ -390,29 +480,29 @@
       if (i !== current) { const dir = i > current ? 'next' : 'prev'; current = i; saveAnswers(); renderQuestion(dir); }
       return;
     }
-    if (e.target.closest('[data-act="dash"]')) refresh();
+    if (e.target.closest('[data-act="new"]')) newCitizen();
   });
 
   $('#prev-btn').addEventListener('click', () => go(-1));
   $('#next-btn').addEventListener('click', () => {
     if (!exam) return;
-    if (current === exam.questions.length - 1) finish(false);
+    if (current === exam.questions.length - 1) openSubmit(false);
     else go(1);
   });
+  $('#cancel-exam').addEventListener('click', cancelExam);
 
+  const modalOpen = () => !$('#modal').hidden || !$('#submit-modal').hidden;
   document.addEventListener('keydown', (e) => {
-    if (!exam || !$('#modal').hidden || e.altKey || e.ctrlKey || e.metaKey) return;
+    if (!exam || modalOpen() || e.altKey || e.ctrlKey || e.metaKey) return;
     if (/^[1-8]$/.test(e.key)) choose(Number(e.key) - 1);
     // RTL: the right arrow goes back, the left arrow goes forward
-    else if (e.key === 'ArrowLeft') { e.preventDefault(); current === exam.questions.length - 1 ? finish(false) : go(1); }
+    else if (e.key === 'ArrowLeft') { e.preventDefault(); current === exam.questions.length - 1 ? openSubmit(false) : go(1); }
     else if (e.key === 'ArrowRight') { e.preventDefault(); go(-1); }
   });
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && !$('#modal').hidden) $('#modal [data-close].btn').click();
-  });
-
-  document.addEventListener('visibilitychange', () => {
-    if (document.hidden && exam && !submitting) { focusLost++; saveAnswers(); }
+    if (e.key !== 'Escape') return;
+    if (!$('#modal').hidden) $('#modal [data-close].btn').click();
+    else if (!$('#submit-modal').hidden) closeSubmit();
   });
 
   window.addEventListener('beforeunload', (e) => {
@@ -420,32 +510,49 @@
   });
 
   $('#logout-btn').addEventListener('click', async () => {
-    if (exam && !(await confirmModal('تسجيل الخروج؟', 'اختبارك شغّال والعداد بيكمل حتى لو طلعت.', 'خروج'))) return;
-    await api('/auth/logout', {}).catch(() => {});
+    if (exam && !(await confirmModal('تسجيل الخروج؟', 'فيه اختبار شغّال والعداد بيكمل حتى لو طلعت.', 'خروج'))) return;
+    await api('/api/admin/logout', {}).catch(() => {});
     exam = null;
+    remember(null);
     location.href = '/';
   });
 
   $('#login-form').addEventListener('submit', async (e) => {
     e.preventDefault();
-    const err = $('#login-error');
-    const username = $('#username').value.trim().replace(/^@/, '');
-    if (!/^[a-zA-Z0-9_.]{2,32}(#\d{4})?$/.test(username)) {
-      err.textContent = 'اليوزر غلط — حروف إنجليزية وأرقام و _ و . بس (بدون مسافات).';
-      err.hidden = false;
-      return;
-    }
-    err.hidden = true;
+    const name = $('#admin-name').value.trim();
+    const discordId = $('#admin-discord-id').value.trim();
+    if (!name) return showLoginError('اكتب اسمك.');
+    if (!isDiscordId(discordId)) return showLoginError('الآيدي غلط — لازم يكون أرقام بس (17 إلى 20 رقم).');
+    showLoginError('');
     $('#login-btn').disabled = true;
     try {
-      await api('/auth/login', { username });
+      await api('/api/admin/login', { name, discordId, password: $('#admin-pass').value });
+      $('#admin-pass').value = '';
       await boot();
-    } catch {
-      err.textContent = 'ما قدرنا ندخلك، جرّب مرة ثانية.';
-      err.hidden = false;
+    } catch (ex) {
+      showLoginError({
+        wrong_password: 'كلمة السر غلط.',
+        rate_limited: 'محاولات كثيرة، انتظر دقيقة.',
+        admin_disabled: 'الموقع مقفل — لازم تحط ADMIN_PASSWORD في Environment على Render.',
+      }[ex.message] || 'ما قدرنا ندخلك، جرّب مرة ثانية.');
     } finally {
       $('#login-btn').disabled = false;
     }
+  });
+
+  $('#admin-discord-id').addEventListener('input', (e) => { e.target.value = e.target.value.replace(/\D/g, ''); });
+
+  $('#citizen-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const username = $('#citizen-username').value.trim().replace(/^@/, '').toLowerCase();
+    if (!/^[a-z0-9_.]{2,32}(#\d{4})?$/.test(username)) {
+      $('#citizen-error').textContent = 'اليوزر غلط — حروف إنجليزية وأرقام و _ و . بس (بدون مسافات).';
+      $('#citizen-error').hidden = false;
+      return;
+    }
+    $('#citizen-btn').disabled = true;
+    await checkCitizen(username);
+    $('#citizen-btn').disabled = false;
   });
 
   boot();

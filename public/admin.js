@@ -13,7 +13,7 @@
     const h = Math.floor(mins / 60);
     return h ? `${h} ساعة${mins % 60 ? ` ${mins % 60} دقيقة` : ''}` : `${mins} دقيقة`;
   };
-  const PLAYER_LABEL = { accept: 'المتفعل', reject: 'المرفوض', reset: 'اللاعب' };
+  const PLAYER_LABEL = { accept: 'المتفعل', reject: 'المرفوض', fail: 'المرفوض', reset: 'اللاعب', cancel: 'اللاعب' };
   const isDiscordId = (v) => /^\d{17,20}$/.test(v);
   const idTag = (id) => (id ? ` <code dir="ltr">${esc(id)}</code>` : '');
 
@@ -138,7 +138,7 @@
     return `<span class="badge staff">✅ فعّله: ${esc(a.decidedBy?.name || 'إداري')}</span>`;
   }
 
-  const ACTIONS = { accept: '✅ تفعيل', reject: '❌ رفض', reset: '🔁 فتح محاولات جديدة' };
+  const ACTIONS = { accept: '✅ تفعيل', reject: '❌ رفض', fail: '❌ رسب — تايم أوت', reset: '🔁 فتح محاولات جديدة', cancel: '⏹ إلغاء اختبار' };
 
   function renderAdminLog() {
     const log = data.adminLog.slice(0, 12);
@@ -189,7 +189,7 @@
       </div>`).join('');
     const actionHistory = data.adminLog
       .filter((l) => l.userId === a.userId)
-      .map((l) => `<p>${{ accept: '✅ تفعيل', reject: '❌ رفض', reset: '🔁 فتح محاولات جديدة' }[l.action] || l.action} — بواسطة <b>${esc(l.by.name)}</b> · <bdi>${fmtDate(l.at)}</bdi></p>`)
+      .map((l) => `<p>${ACTIONS[l.action] || l.action} — بواسطة <b>${esc(l.by.name)}</b> · <bdi>${fmtDate(l.at)}</bdi></p>`)
       .join('');
 
     // accepting is locked until the admin types the player's Discord ID
@@ -220,6 +220,11 @@
         <p>${a.decision === 'rejected' ? '❌ تم الرفض' : '✅ تم التفعيل'} · <bdi>${fmtDate(a.decidedBy.at)}</bdi></p>
         <p>الإداري: <b>${esc(a.decidedBy.name)}</b>${idTag(a.decidedBy.discordId)}</p>
         <p>${a.decision === 'rejected' ? 'المرفوض' : 'المتفعل'}: <b dir="ltr">${esc(a.username)}</b>${idTag(a.discordId)}</p>
+      </div>` : ''}
+      ${!a.passed && a.conductedBy ? `<div class="d-granted is-rejected">
+        <p>❌ رسب · <bdi>${fmtDate(a.submittedAt)}</bdi></p>
+        <p>الإداري: <b>${esc(a.conductedBy.name)}</b>${idTag(a.conductedBy.discordId)}</p>
+        <p>المرفوض: <b dir="ltr">${esc(a.username)}</b>${idTag(a.discordId)}</p>
       </div>` : ''}
       ${a.timeoutUntil ? `<p class="d-granted is-rejected">❌ مرفوض — عليه تايم أوت، يقدر يعيد بعد <b>${fmtLeft(a.timeoutUntil)}</b> (<bdi>${fmtDate(a.timeoutUntil)}</bdi>)</p>` : ''}
       ${isPending(a) ? '<p class="d-granted is-pending">⏳ نجح — أعطه الرتبة في الدسكورد بيدك، وبعدها اضغط الزر الأخضر تحت عشان ينسجل باسمك.</p>' : ''}
