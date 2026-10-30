@@ -41,14 +41,11 @@
   }
 
   // ---------------- Sign in ----------------
-  function showLogin(disabled) {
+  function showLogin() {
     $('#content').hidden = true;
     $('#admin-chip').hidden = true;
     $('#login').hidden = false;
-    $('#login-form').hidden = disabled;
-    $('#login-text').textContent = disabled
-      ? 'لوحة النتائج مقفلة. أضف ADMIN_PASSWORD في Environment على Render (أو ملف .env) عشان تفتحها.'
-      : 'اكتب اسمك (يبان في السجل عند كل قرار) وكلمة سر الإدارة.';
+    $('#login-text').textContent = 'اكتب اسمك وآيديك في الدسكورد — ينسجلون عند كل قرار.';
   }
 
   $('#login-form').addEventListener('submit', async (e) => {
@@ -61,13 +58,11 @@
       await api('/api/admin/login', {
         name: $('#admin-name').value.trim(),
         discordId: $('#admin-discord-id').value.trim(),
-        password: $('#admin-pass').value,
       });
-      $('#admin-pass').value = '';
       await load();
     } catch (ex) {
       err.textContent = {
-        wrong_password: 'كلمة السر غلط.',
+        not_admin: 'الآيدي هذا مو من آيديات الإدارة.',
         name_required: 'اكتب اسمك.',
         bad_discord_id: 'الـ ID غلط — لازم يكون أرقام بس (17 إلى 20 رقم).',
         rate_limited: 'محاولات كثيرة، انتظر دقيقة.',
@@ -88,7 +83,7 @@
     try {
       data = await api('/api/admin/attempts');
     } catch (e) {
-      if (e.status === 401) return showLogin(e.message === 'admin_disabled');
+      if (e.status === 401) return showLogin();
       toast('ما قدرنا نجيب النتائج.', true);
       return;
     }

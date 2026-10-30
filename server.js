@@ -21,17 +21,19 @@ const SECURE_COOKIES = BASE_URL.startsWith('https://');
 
 const INVITE_URL = env('DISCORD_INVITE_URL');
 const WEBHOOK_URL = env('DISCORD_WEBHOOK_URL');
-const ADMIN_PASSWORD = env('ADMIN_PASSWORD');
+// Admins sign in with name + Discord ID, no password. ADMIN_IDS (optional, comma-separated)
+// limits sign-in to those IDs; left empty, anyone who opens the site can sign in.
+const ADMIN_IDS = env('ADMIN_IDS').split(/[\s,]+/).filter(Boolean);
 
 if (WEBHOOK_URL && !/^https:\/\/(discord|discordapp)\.com\/api\/webhooks\/\d+\/[\w-]+$/.test(WEBHOOK_URL)) {
   console.error('✖ DISCORD_WEBHOOK_URL غلط — انسخه من إعدادات الروم ← Integrations ← Webhooks ← Copy Webhook URL');
   process.exit(1);
 }
-if (!ADMIN_PASSWORD) console.warn('⚠ ADMIN_PASSWORD فاضي — لوحة النتائج /admin مقفلة لين تحطه');
-else if (ADMIN_PASSWORD.length < 8) {
-  console.error('✖ ADMIN_PASSWORD قصير — لازم 8 أحرف على الأقل');
+if (ADMIN_IDS.some((id) => !/^\d{17,20}$/.test(id))) {
+  console.error('✖ ADMIN_IDS غلط — حط آيديات الإداريين أرقام بس، بينها فاصلة');
   process.exit(1);
 }
+if (!ADMIN_IDS.length) console.warn('⚠ ADMIN_IDS فاضي — أي أحد يفتح الموقع يقدر يدخل كإداري');
 if (!WEBHOOK_URL) console.warn('⚠ DISCORD_WEBHOOK_URL فاضي — النتائج بتظهر في لوحة النتائج بس، ما توصل الدسكورد');
 
 // Without a fixed secret, logins reset whenever the site restarts (works, but set one)
@@ -184,13 +186,7 @@ function formatDuration(sec) {
   return m ? `${m} د ${s} ث` : `${s} ث`;
 }
 
-// Constant-time password check
-function passwordOk(input) {
-  if (!ADMIN_PASSWORD || typeof input !== 'string') return false;
-  const a = crypto.createHash('sha256').update(input).digest();
-  const b = crypto.createHash('sha256').update(ADMIN_PASSWORD).digest();
-  return crypto.timingSafeEqual(a, b);
-}
+const adminAllowed = (discordId) => !ADMIN_IDS.length || ADMIN_IDS.includes(discordId);
 
 // ---------------------------------------------------------------------
 //  Discord webhook (optional — just posts messages to one channel)
@@ -470,13 +466,13 @@ setInterval(() => { const t = now(); for (const [k, v] of hits) if (t > v.reset)
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
 function currentAdmin(req) {
-  const admin = ADMIN_PASSWORD ? unsign(parseCookies(req).jt_admin) : null;
-  // sessions from before admin Discord IDs existed must sign in again
-  return admin && admin.discordId ? admin : null;
+  const admin = unsign(parseCookies(req).jt_admin);
+  // sessions from before admin Discord IDs existed (or IDs since removed from ADMIN_IDS) must sign in again
+  return admin && admin.discordId && adminAllowed(admin.discordId) ? admin : null;
 }
 function requireAdmin(req, res, next) {
   const admin = currentAdmin(req);
-  if (!admin) return res.status(401).json({ error: ADMIN_PASSWORD ? 'not_logged_in' : 'admin_disabled' });
+  if (!admin) return res.status(401).json({ error: 'not_logged_in' });
   req.admin = admin;
   next();
 }
@@ -515,7 +511,6 @@ app.get('/api/me', (req, res) => {
       cooldownMinutes: settings.cooldownMinutes,
       rules,
     },
-    adminEnabled: Boolean(ADMIN_PASSWORD),
     admin: admin ? { name: admin.name, discordId: admin.discordId } : null,
   });
 });
@@ -604,12 +599,11 @@ app.post('/api/exam/submit', requireAdmin, requireCitizen, (req, res) => {
 
 // ----- Admin API -----
 app.post('/api/admin/login', (req, res) => {
-  if (!ADMIN_PASSWORD) return res.status(403).json({ error: 'admin_disabled' });
   const name = String(req.body?.name || '').replace(/[<>\u0000-\u001f]/g, '').trim().slice(0, 32);
   if (!name) return res.status(400).json({ error: 'name_required' });
   const discordId = cleanDiscordId(req.body?.discordId);
   if (!discordId) return res.status(400).json({ error: 'bad_discord_id' });
-  if (!passwordOk(req.body?.password)) return res.status(401).json({ error: 'wrong_password' });
+  if (!adminAllowed(discordId)) return res.status(403).json({ error: 'not_admin' });
   setCookie(res, 'jt_admin', sign({ name, discordId, exp: now() + 12 * 3600_000 }), 12 * 3600);
   res.json({ ok: true, name });
 });

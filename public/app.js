@@ -100,14 +100,12 @@
     if (!info.admin) {
       $('#user-chip').hidden = true;
       $('#admin-link').hidden = true;
-      if (!info.adminEnabled) showLoginError('الموقع مقفل — لازم تحط ADMIN_PASSWORD في Environment على Render.');
       return show('landing');
     }
 
     $('#user-chip').hidden = false;
     $('#admin-link').hidden = false;
     $('#user-name').textContent = info.admin.name;
-    $('#dash-admin').textContent = info.admin.name;
     $('#st-count').textContent = info.exam.questionCount;
     $('#st-time').innerHTML = fmtMinutes(info.exam.timeLimitMinutes);
     $('#st-pass').innerHTML = `${info.exam.passScore}<small>من ${info.exam.questionCount}</small>`;
@@ -526,14 +524,12 @@
     showLoginError('');
     $('#login-btn').disabled = true;
     try {
-      await api('/api/admin/login', { name, discordId, password: $('#admin-pass').value });
-      $('#admin-pass').value = '';
+      await api('/api/admin/login', { name, discordId });
       await boot();
     } catch (ex) {
       showLoginError({
-        wrong_password: 'كلمة السر غلط.',
+        not_admin: 'الآيدي هذا مو من آيديات الإدارة.',
         rate_limited: 'محاولات كثيرة، انتظر دقيقة.',
-        admin_disabled: 'الموقع مقفل — لازم تحط ADMIN_PASSWORD في Environment على Render.',
       }[ex.message] || 'ما قدرنا ندخلك، جرّب مرة ثانية.');
     } finally {
       $('#login-btn').disabled = false;
