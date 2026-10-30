@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>إدارة المعرض — Justice Town</title>
+  <meta name="theme-color" content="#05070c">
+  <link rel="icon" href="/assets/logo-circle.webp">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=Readex+Pro:wght@300;400;500;600;700&display=swap">
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/admin.css">
+</head>
+<body>
+  <!-- ============ Sign in ============ -->
+  <section class="login gridded" id="login" hidden>
+    <form class="login-card" id="login-form" autocomplete="on">
+      <img src="/assets/logo-circle.webp" alt="" width="64" height="64">
+      <h1>إدارة المعرض</h1>
+      <p class="muted">للإداريين فقط — اسمك ينسجل على كل سيارة تضيفها أو تعدلها.</p>
+      <label class="field">
+        <span>اسمك</span>
+        <input id="admin-name" name="username" maxlength="24" autocomplete="username" required>
+      </label>
+      <label class="field">
+        <span>كلمة السر</span>
+        <input id="admin-pass" name="password" type="password" maxlength="200" autocomplete="current-password" required>
+      </label>
+      <p class="form-error" id="login-error" hidden></p>
+      <button class="btn primary" id="login-btn" type="submit">دخول</button>
+    </form>
+  </section>
+
+  <!-- ============ Dashboard ============ -->
+  <div id="dash" hidden>
+    <header class="topbar">
+      <div class="wrap topbar-in">
+        <div class="brand">
+          <img src="/assets/logo-circle.webp" alt="" width="40" height="40">
+          <span><b>Justice Town</b><small>SHOWROOM · ADMIN</small></span>
+        </div>
+        <div class="top-actions">
+          <span class="who" id="admin-who"></span>
+          <a class="btn ghost sm" href="/" target="_blank" rel="noopener">عرض الموقع</a>
+          <button class="btn ghost sm" id="logout" type="button">خروج</button>
+        </div>
+      </div>
+    </header>
+
+    <main class="wrap admin-main">
+      <div class="banner" id="storage-warn" hidden>
+        ⚠ التخزين مؤقت: أي سيارة تضيفها بتنمسح لما الموقع يعيد التشغيل على Render. اربط <b>MONGODB_URI</b> عشان تنحفظ دائماً.
+      </div>
+
+      <div class="admin-head">
+        <div>
+          <span class="eyebrow">CLASS A · B · C · D</span>
+          <h1>السيارات</h1>
+        </div>
+        <div class="stats">
+          <div class="stat"><b id="a-total">0</b><small>المجموع</small></div>
+          <div class="stat"><b class="ok" id="a-avail">0</b><small>متوفر</small></div>
+          <div class="stat"><b class="bad" id="a-out">0</b><small>غير متوفر</small></div>
+        </div>
+      </div>
+
+      <div class="toolbar">
+        <label class="search">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+          <input id="a-q" type="search" placeholder="ابحث في السيارات..." autocomplete="off">
+        </label>
+        <button class="btn primary" id="add-btn" type="button">+ إضافة سيارة</button>
+      </div>
+
+      <div class="a-list" id="a-list"></div>
+      <p class="empty" id="a-empty" hidden>ما فيه سيارات للحين — اضغط "إضافة سيارة".</p>
+    </main>
+  </div>
+
+  <!-- ============ Add / edit ============ -->
+  <div class="modal" id="editor" hidden>
+    <form class="modal-card editor" id="car-form" novalidate>
+      <button type="button" class="modal-x" data-close aria-label="إغلاق">✕</button>
+      <h2 id="editor-title">إضافة سيارة</h2>
+
+      <label class="drop" id="drop">
+        <input id="f-image" type="file" accept="image/jpeg,image/png,image/webp" hidden>
+        <img id="f-preview" alt="" hidden>
+        <span class="drop-hint" id="drop-hint">
+          <b>اضغط أو اسحب صورة السيارة هنا</b>
+          <small>JPG أو PNG أو WebP — تتصغر تلقائياً</small>
+        </span>
+      </label>
+
+      <div class="form-grid">
+        <label class="field span-2">
+          <span>اسم السيارة</span>
+          <input id="f-name" maxlength="40" required placeholder="مثال: Issi Metro">
+        </label>
+        <label class="field">
+          <span>السعر ($)</span>
+          <input id="f-price" type="number" min="0" max="1000000000" step="1" inputmode="numeric" required placeholder="144000">
+        </label>
+        <label class="field">
+          <span>الكمية</span>
+          <input id="f-qty" type="number" min="0" max="9999" step="1" inputmode="numeric" required value="1">
+        </label>
+        <label class="field span-2">
+          <span>وصف قصير <small class="muted">(اختياري)</small></span>
+          <input id="f-note" maxlength="200" placeholder="مثال: سيارة صغيرة وسريعة داخل المدينة">
+        </label>
+        <div class="field span-2">
+          <span>الفئة</span>
+          <div class="class-pick" role="radiogroup" aria-label="الفئة">
+            <label><input type="radio" name="f-class" value="A"><span>A</span></label>
+            <label><input type="radio" name="f-class" value="B"><span>B</span></label>
+            <label><input type="radio" name="f-class" value="C" checked><span>C</span></label>
+            <label><input type="radio" name="f-class" value="D"><span>D</span></label>
+          </div>
+        </div>
+      </div>
+
+      <p class="form-error" id="form-error" hidden></p>
+      <div class="editor-actions">
+        <button class="btn primary" id="save-btn" type="submit">حفظ</button>
+        <button class="btn ghost" type="button" data-close>إلغاء</button>
+      </div>
+    </form>
+  </div>
+
+  <!-- ============ Confirm delete ============ -->
+  <div class="modal" id="confirm" hidden>
+    <div class="modal-card confirm-card" role="alertdialog" aria-modal="true" aria-labelledby="confirm-text">
+      <h2>حذف السيارة</h2>
+      <p id="confirm-text"></p>
+      <div class="editor-actions">
+        <button class="btn danger" id="confirm-yes" type="button">احذف</button>
+        <button class="btn ghost" type="button" data-close>إلغاء</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toasts" id="toasts" aria-live="polite"></div>
+  <script src="/admin.js"></script>
+</body>
+</html>
