@@ -1,6 +1,6 @@
 // =====================================================================
 //  Justice Town — Roleplay Activation Exam
-//  Admins only: an admin signs in (name + Discord ID + password), types a
+//  Admins only: an admin signs in with their Discord account, types a
 //  citizen's Discord username, shares their screen in Discord and runs the
 //  timed exam with them. Handing it in needs the citizen's Discord ID; the
 //  server grades it, a pass is an activation under that admin, a fail is a
@@ -21,9 +21,18 @@ const SECURE_COOKIES = BASE_URL.startsWith('https://');
 
 const INVITE_URL = env('DISCORD_INVITE_URL');
 const WEBHOOK_URL = env('DISCORD_WEBHOOK_URL');
-// Admins sign in with name + Discord ID, no password. ADMIN_IDS (optional, comma-separated)
-// limits sign-in to those IDs; left empty, anyone who opens the site can sign in.
-const ADMIN_IDS = env('ADMIN_IDS').split(/[\s,]+/).filter(Boolean);
+// Admins sign in with their Discord account (OAuth2, no bot needed) once DISCORD_CLIENT_ID +
+// DISCORD_CLIENT_SECRET are set. Only members holding ADMIN_ROLE_ID in DISCORD_GUILD_ID
+// (read from their own account) or listed in ADMIN_IDS may get in then.
+// Without them the old name + Discord ID form is used (ADMIN_IDS optional there).
+const list = (key) => env(key).split(/[\s,]+/).filter(Boolean);
+const ADMIN_IDS = list('ADMIN_IDS');
+const CLIENT_ID = env('DISCORD_CLIENT_ID');
+const CLIENT_SECRET = env('DISCORD_CLIENT_SECRET');
+const DISCORD_LOGIN = Boolean(CLIENT_ID && CLIENT_SECRET);
+const GUILD_ID = env('DISCORD_GUILD_ID');
+const ADMIN_ROLE_IDS = list('ADMIN_ROLE_ID');
+const ROLE_LOGIN = Boolean(DISCORD_LOGIN && GUILD_ID && ADMIN_ROLE_IDS.length);
 
 if (WEBHOOK_URL && !/^https:\/\/(discord|discordapp)\.com\/api\/webhooks\/\d+\/[\w-]+$/.test(WEBHOOK_URL)) {
   console.error('✖ DISCORD_WEBHOOK_URL غلط — انسخه من إعدادات الروم ← Integrations ← Webhooks ← Copy Webhook URL');
@@ -33,7 +42,26 @@ if (ADMIN_IDS.some((id) => !/^\d{17,20}$/.test(id))) {
   console.error('✖ ADMIN_IDS غلط — حط آيديات الإداريين أرقام بس، بينها فاصلة');
   process.exit(1);
 }
-if (!ADMIN_IDS.length) console.warn('⚠ ADMIN_IDS فاضي — أي أحد يفتح الموقع يقدر يدخل كإداري');
+if ((CLIENT_ID || CLIENT_SECRET) && !DISCORD_LOGIN) {
+  console.error('✖ لازم تحط DISCORD_CLIENT_ID و DISCORD_CLIENT_SECRET الاثنين');
+  process.exit(1);
+}
+if (DISCORD_LOGIN && !/^\d{17,20}$/.test(CLIENT_ID)) {
+  console.error('✖ DISCORD_CLIENT_ID غلط — انسخه من Discord Developer Portal ← OAuth2 ← Client ID');
+  process.exit(1);
+}
+if (Boolean(GUILD_ID) !== Boolean(ADMIN_ROLE_IDS.length)) {
+  console.error('✖ لازم تحط DISCORD_GUILD_ID و ADMIN_ROLE_ID الاثنين');
+  process.exit(1);
+}
+if ([GUILD_ID, ...ADMIN_ROLE_IDS].filter(Boolean).some((id) => !/^\d{17,20}$/.test(id))) {
+  console.error('✖ DISCORD_GUILD_ID أو ADMIN_ROLE_ID غلط — أرقام بس (Copy Server ID / Copy Role ID)');
+  process.exit(1);
+}
+if (GUILD_ID && !DISCORD_LOGIN) console.warn('⚠ ADMIN_ROLE_ID ما يشتغل بدون DISCORD_CLIENT_ID و DISCORD_CLIENT_SECRET');
+if (DISCORD_LOGIN && !ROLE_LOGIN && !ADMIN_IDS.length) console.error('✖ ما أحد بيقدر يدخل — حط DISCORD_GUILD_ID و ADMIN_ROLE_ID (أو ADMIN_IDS)');
+else if (!DISCORD_LOGIN) console.warn('⚠ دخول الدسكورد مو مفعّل — الإداري يدخل باسم + آيدي بس (حط DISCORD_CLIENT_ID و DISCORD_CLIENT_SECRET)');
+if (!DISCORD_LOGIN && !ADMIN_IDS.length) console.warn('⚠ ADMIN_IDS فاضي — أي أحد يفتح الموقع يقدر يدخل كإداري');
 if (!WEBHOOK_URL) console.warn('⚠ DISCORD_WEBHOOK_URL فاضي — النتائج بتظهر في لوحة النتائج بس، ما توصل الدسكورد');
 
 // Without a fixed secret, logins reset whenever the site restarts (works, but set one)
@@ -186,7 +214,11 @@ function formatDuration(sec) {
   return m ? `${m} د ${s} ث` : `${s} ث`;
 }
 
+// the manual form lets anyone in when ADMIN_IDS is empty
 const adminAllowed = (discordId) => !ADMIN_IDS.length || ADMIN_IDS.includes(discordId);
+// Discord sessions: the role was checked at sign-in, a listed ID always counts
+const discordAdminAllowed = (admin) => ADMIN_IDS.includes(admin.discordId) || (ROLE_LOGIN && admin.byRole === true);
+const cleanName = (value) => String(value || '').replace(/[<>@\u0000-\u001f]/g, '').trim().slice(0, 32);
 
 // ---------------------------------------------------------------------
 //  Discord webhook (optional — just posts messages to one channel)
@@ -461,14 +493,18 @@ function rateLimit(bucket, limit) {
 app.use('/api', rateLimit('all', 120));
 app.use(['/api/exam', '/api/citizen', '/api/admin/decide', '/api/admin/reset'], rateLimit('action', 40));
 app.use('/api/admin/login', rateLimit('admin-login', 5));
+app.use('/auth', rateLimit('auth', 20));
 setInterval(() => { const t = now(); for (const [k, v] of hits) if (t > v.reset) hits.delete(k); }, 120_000).unref();
 
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
 function currentAdmin(req) {
   const admin = unsign(parseCookies(req).jt_admin);
-  // sessions from before admin Discord IDs existed (or IDs since removed from ADMIN_IDS) must sign in again
-  return admin && admin.discordId && adminAllowed(admin.discordId) ? admin : null;
+  // sessions from before admin Discord IDs existed (or IDs since removed from ADMIN_IDS) must sign in again,
+  // and once Discord login is on, so must every session made with the typed-in form
+  if (!admin || !admin.discordId) return null;
+  if (DISCORD_LOGIN) return admin.via === 'discord' && discordAdminAllowed(admin) ? admin : null;
+  return adminAllowed(admin.discordId) ? admin : null;
 }
 function requireAdmin(req, res, next) {
   const admin = currentAdmin(req);
@@ -512,6 +548,7 @@ app.get('/api/me', (req, res) => {
       rules,
     },
     admin: admin ? { name: admin.name, discordId: admin.discordId } : null,
+    loginMode: DISCORD_LOGIN ? 'discord' : 'manual',
   });
 });
 
@@ -599,7 +636,9 @@ app.post('/api/exam/submit', requireAdmin, requireCitizen, (req, res) => {
 
 // ----- Admin API -----
 app.post('/api/admin/login', (req, res) => {
-  const name = String(req.body?.name || '').replace(/[<>\u0000-\u001f]/g, '').trim().slice(0, 32);
+  // a typed-in ID proves nothing, so the form is off once Discord login is set up
+  if (DISCORD_LOGIN) return res.status(403).json({ error: 'discord_login_required' });
+  const name = cleanName(req.body?.name);
   if (!name) return res.status(400).json({ error: 'name_required' });
   const discordId = cleanDiscordId(req.body?.discordId);
   if (!discordId) return res.status(400).json({ error: 'bad_discord_id' });
@@ -687,6 +726,77 @@ app.post('/api/admin/reset', requireAdmin, (req, res) => {
   sendAdminLog('reset', { username }, by).catch((e) => console.error(e));
   res.json({ ok: true });
 });
+
+// ----- Discord sign-in (OAuth2 — no bot) -----
+// "guilds.members.read" lets us read the member's own roles in our server
+const REDIRECT_URI = `${BASE_URL}/auth/callback`;
+const SCOPES = ROLE_LOGIN ? 'identify guilds.members.read' : 'identify';
+// role sessions are shorter, so taking the role away locks the admin out soon after
+const SESSION_HOURS = ROLE_LOGIN ? 6 : 12;
+const LOGIN_TARGETS = { admin: '/admin', home: '/' };
+
+app.get('/auth/discord', (req, res) => {
+  if (!DISCORD_LOGIN) return res.redirect('/');
+  const state = crypto.randomBytes(16).toString('hex');
+  const next = LOGIN_TARGETS[req.query.next] || '/';
+  // the state cookie ties the callback to this browser, so nobody can log someone else in
+  setCookie(res, 'jt_oauth', sign({ state, next, exp: now() + 10 * 60_000 }), 600);
+  const params = new URLSearchParams({ client_id: CLIENT_ID, response_type: 'code', redirect_uri: REDIRECT_URI, scope: SCOPES, state, prompt: 'none' });
+  res.redirect(`https://discord.com/oauth2/authorize?${params}`);
+});
+
+app.get('/auth/callback', wrap(async (req, res) => {
+  const saved = unsign(parseCookies(req).jt_oauth);
+  setCookie(res, 'jt_oauth', '', 0);
+  const back = saved?.next || '/';
+  const fail = (code) => res.redirect(`${back}?login_error=${code}`);
+  if (!DISCORD_LOGIN) return res.redirect('/');
+
+  const { state, code, error } = req.query;
+  if (!saved || typeof state !== 'string' || state.length !== saved.state.length
+    || !crypto.timingSafeEqual(Buffer.from(state), Buffer.from(saved.state))) return fail('expired');
+  if (error) return fail('cancelled');
+  if (typeof code !== 'string' || !code || code.length > 100) return fail('expired');
+
+  const tokenRes = await fetch('https://discord.com/api/oauth2/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ client_id: CLIENT_ID, client_secret: CLIENT_SECRET, grant_type: 'authorization_code', code, redirect_uri: REDIRECT_URI }),
+  });
+  if (!tokenRes.ok) {
+    console.error('✖ دخول الدسكورد فشل:', tokenRes.status, await tokenRes.text().catch(() => ''));
+    return fail('discord');
+  }
+  const { access_token: token } = await tokenRes.json();
+  const auth = { headers: { Authorization: `Bearer ${token}` } };
+  const meRes = await fetch('https://discord.com/api/users/@me', auth);
+  const me = meRes.ok ? await meRes.json() : {};
+  // 404 = not in the server; otherwise the member's role IDs
+  let roles = [];
+  if (ROLE_LOGIN) {
+    const memberRes = await fetch(`https://discord.com/api/users/@me/guilds/${GUILD_ID}/member`, auth);
+    if (memberRes.ok) roles = (await memberRes.json()).roles || [];
+    else if (memberRes.status !== 404) console.error('✖ ما قدرنا نقرأ رتب الإداري:', memberRes.status);
+  }
+  // the token was only needed to read who this is
+  fetch('https://discord.com/api/oauth2/token/revoke', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ client_id: CLIENT_ID, client_secret: CLIENT_SECRET, token }),
+  }).catch(() => {});
+
+  const discordId = cleanDiscordId(me.id);
+  if (!discordId) return fail('discord');
+  const byRole = ROLE_LOGIN && roles.some((r) => ADMIN_ROLE_IDS.includes(r));
+  const session = { discordId, via: 'discord', byRole };
+  if (!discordAdminAllowed(session)) {
+    console.warn(`⚠ محاولة دخول من حساب ما عنده رتبة مسؤول التفعيل: ${cleanName(me.username)} (${discordId})`);
+    return fail(ROLE_LOGIN ? 'no_role' : 'not_admin');
+  }
+  const name = cleanName(me.global_name) || cleanName(me.username) || 'إداري';
+  setCookie(res, 'jt_admin', sign({ ...session, name, exp: now() + SESSION_HOURS * 3600_000 }), SESSION_HOURS * 3600);
+  res.redirect(back);
+}));
 
 // ----- Pages -----
 const PUBLIC_DIR = path.join(__dirname, 'public');

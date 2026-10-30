@@ -41,11 +41,30 @@
   }
 
   // ---------------- Sign in ----------------
-  function showLogin() {
+  const LOGIN_ERRORS = {
+    no_role: 'ما عندك رتبة مسؤول التفعيل في السيرفر.',
+    not_admin: 'حسابك مو من حسابات الإدارة.',
+    cancelled: 'لغيت الدخول.',
+    expired: 'انتهت مهلة الدخول، جرّب مرة ثانية.',
+    discord: 'الدسكورد ما رد، جرّب مرة ثانية.',
+  };
+  const loginError = new URLSearchParams(location.search).get('login_error');
+  if (loginError) history.replaceState(null, '', location.pathname + location.hash);
+
+  async function showLogin() {
     $('#content').hidden = true;
     $('#admin-chip').hidden = true;
+    const me = await api('/api/me').catch(() => ({}));
+    const discord = me.loginMode === 'discord';
+    $('#login-form').hidden = discord;
+    $('#discord-login').hidden = !discord;
+    $('#login-text').textContent = discord
+      ? 'ادخل بحسابك في الدسكورد — ما يدخل إلا اللي عنده رتبة مسؤول التفعيل.'
+      : 'اكتب اسمك وآيديك في الدسكورد — ينسجلون عند كل قرار.';
+    const err = $('#discord-error');
+    err.textContent = loginError ? LOGIN_ERRORS[loginError] || LOGIN_ERRORS.discord : '';
+    err.hidden = !loginError;
     $('#login').hidden = false;
-    $('#login-text').textContent = 'اكتب اسمك وآيديك في الدسكورد — ينسجلون عند كل قرار.';
   }
 
   $('#login-form').addEventListener('submit', async (e) => {

@@ -1,24 +1,28 @@
 # Render Blueprint — Render reads this file and asks you for each value.
 services:
   - type: web
-    name: justice-town-cars
+    name: justice-town-exam
     runtime: node
     plan: free
     buildCommand: npm install --omit=dev
     startCommand: npm start
-    healthCheckPath: /api/site
+    healthCheckPath: /api/me
     envVars:
       - key: NODE_VERSION
         value: "22"
       - key: SESSION_SECRET
         generateValue: true
-      - key: ADMIN_PASSWORD
+      - key: DISCORD_CLIENT_ID
         sync: false
-      - key: MONGODB_URI
+      - key: DISCORD_CLIENT_SECRET
         sync: false
-      - key: ADMIN_PATH
+      - key: DISCORD_GUILD_ID
+        sync: false
+      - key: ADMIN_ROLE_ID
+        sync: false
+      - key: ADMIN_IDS
+        sync: false
+      - key: DISCORD_WEBHOOK_URL
         sync: false
       - key: DISCORD_INVITE_URL
-        sync: false
-      - key: SERVER_URL
         sync: false

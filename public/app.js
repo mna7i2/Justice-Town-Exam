@@ -100,6 +100,8 @@
     if (!info.admin) {
       $('#user-chip').hidden = true;
       $('#admin-link').hidden = true;
+      $('#login-form').hidden = info.loginMode === 'discord';
+      $('#discord-login').hidden = info.loginMode !== 'discord';
       return show('landing');
     }
 
@@ -123,6 +125,20 @@
     const err = $('#login-error');
     err.textContent = msg;
     err.hidden = !msg;
+  }
+
+  // the Discord sign-in comes back as /?login_error=… when it's refused
+  const LOGIN_ERRORS = {
+    no_role: 'ما عندك رتبة مسؤول التفعيل في السيرفر.',
+    not_admin: 'حسابك مو من حسابات الإدارة.',
+    cancelled: 'لغيت الدخول.',
+    expired: 'انتهت مهلة الدخول، جرّب مرة ثانية.',
+    discord: 'الدسكورد ما رد، جرّب مرة ثانية.',
+  };
+  const loginError = new URLSearchParams(location.search).get('login_error');
+  if (loginError) {
+    showLoginError(LOGIN_ERRORS[loginError] || LOGIN_ERRORS.discord);
+    history.replaceState(null, '', location.pathname);
   }
 
   // ---------------- Citizen lookup ----------------
