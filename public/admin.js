@@ -1,328 +1,294 @@
-// Justice Town showroom — admin page
+/* =====================================================================
+   Admin dashboard — password sign-in, attempts list, stats, and
+   accept / reject / reset actions recorded under the admin's name.
+   ===================================================================== */
 (() => {
-  const $ = (s, root = document) => root.querySelector(s);
-
-  const state = { cars: [], q: '', editing: null, image: null, deleting: null };
-  const money = (n) => `$${Number(n).toLocaleString('en-US')}`;
-
-  const ERRORS = {
-    wrong_password: 'كلمة السر غلط.',
-    bad_name: 'اكتب اسم صحيح (حرفين على الأقل).',
-    admin_disabled: 'صفحة الإدارة مقفلة — لازم تحط ADMIN_PASSWORD في إعدادات الموقع.',
-    rate_limited: 'محاولات كثيرة — انتظر دقيقة وجرب مرة ثانية.',
-    bad_price: 'السعر لازم يكون رقم صحيح بدون فواصل.',
-    bad_quantity: 'الكمية لازم تكون رقم من 0 إلى 9999.',
-    bad_class: 'اختر الفئة (A أو B أو C أو D).',
-    bad_image: 'الصورة ما تنفع — جرب صورة JPG أو PNG أو WebP ثانية.',
-    image_required: 'لازم تحط صورة للسيارة.',
-    too_large: 'الصورة كبيرة مرة — جرب صورة أصغر.',
-    not_found: 'السيارة هذي انحذفت — حدّث الصفحة.',
-    unauthorized: 'انتهت جلستك — سجّل دخول مرة ثانية.',
+  const $ = (s, el = document) => el.querySelector(s);
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const fmtDate = (t) => new Date(t).toLocaleString('ar-SA-u-nu-latn', { dateStyle: 'medium', timeStyle: 'short' });
+  const fmtDur = (s) => (s >= 60 ? `${Math.floor(s / 60)}د ${s % 60}ث` : `${s}ث`);
+  // time left on a timeout, e.g. "71 ساعة 20 دقيقة"
+  const fmtLeft = (until) => {
+    const mins = Math.max(1, Math.ceil((until - Date.now()) / 60000));
+    const h = Math.floor(mins / 60);
+    return h ? `${h} ساعة${mins % 60 ? ` ${mins % 60} دقيقة` : ''}` : `${mins} دقيقة`;
   };
-  const errorText = (code) => ERRORS[code] || 'صار خطأ — جرب مرة ثانية.';
+  const PLAYER_LABEL = { accept: 'المتفعل', reject: 'المرفوض', reset: 'اللاعب' };
+  const isDiscordId = (v) => /^\d{17,20}$/.test(v);
+  const idTag = (id) => (id ? ` <code dir="ltr">${esc(id)}</code>` : '');
 
-  function el(tag, cls, text) {
-    const node = document.createElement(tag);
-    if (cls) node.className = cls;
-    if (text !== undefined) node.textContent = text;
-    return node;
-  }
+  let data = null;
+  let filter = 'all';
+  let query = '';
 
-  function toast(msg, kind = 'ok') {
-    const t = el('div', `toast ${kind}`, msg);
-    $('#toasts').append(t);
-    setTimeout(() => t.remove(), 3200);
-  }
-
-  async function api(method, url, body) {
-    const res = await fetch(url, {
-      method,
-      headers: body !== undefined ? { 'Content-Type': 'application/json' } : {},
-      body: body !== undefined ? JSON.stringify(body) : undefined,
-      credentials: 'same-origin',
+  async function api(path, body) {
+    const res = await fetch(path, {
+      method: body === undefined ? 'GET' : 'POST',
+      headers: body === undefined ? {} : { 'Content-Type': 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body),
     });
-    const data = await res.json().catch(() => ({}));
-    if (res.status === 401 && url !== '/api/admin/login') showLogin();
-    if (!res.ok) throw new Error(data.error || 'server_error');
-    return data;
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw Object.assign(new Error(json.error || 'request_failed'), { status: res.status, data: json });
+    return json;
+  }
+
+  function toast(msg, bad = false) {
+    const el = document.createElement('div');
+    el.className = `toast${bad ? ' bad' : ''}`;
+    el.textContent = msg;
+    $('#toasts').appendChild(el);
+    setTimeout(() => { el.classList.add('out'); setTimeout(() => el.remove(), 300); }, 3500);
   }
 
   // ---------------- Sign in ----------------
-  function showLogin() {
-    $('#dash').hidden = true;
+  function showLogin(disabled) {
+    $('#content').hidden = true;
+    $('#admin-chip').hidden = true;
     $('#login').hidden = false;
-    $('#admin-name').focus();
+    $('#login-form').hidden = disabled;
+    $('#login-text').textContent = disabled
+      ? 'لوحة النتائج مقفلة. أضف ADMIN_PASSWORD في Environment على Render (أو ملف .env) عشان تفتحها.'
+      : 'اكتب اسمك (يبان في السجل عند كل قرار) وكلمة سر الإدارة.';
   }
 
   $('#login-form').addEventListener('submit', async (e) => {
     e.preventDefault();
-    const btn = $('#login-btn');
     const err = $('#login-error');
     err.hidden = true;
+    const btn = e.submitter || $('#login-form button');
     btn.disabled = true;
     try {
-      await api('POST', '/api/admin/login', { name: $('#admin-name').value, password: $('#admin-pass').value });
-      $('#admin-pass').value = '';
-      await boot();
-    } catch (ex) {
-      err.textContent = errorText(ex.message);
-      err.hidden = false;
-    } finally {
-      btn.disabled = false;
-    }
-  });
-
-  $('#logout').addEventListener('click', async () => {
-    await api('POST', '/api/admin/logout', {}).catch(() => {});
-    showLogin();
-  });
-
-  // ---------------- List ----------------
-  function render() {
-    const q = state.q.trim().toLowerCase();
-    const list = state.cars.filter((c) => !q || c.name.toLowerCase().includes(q));
-    const frag = document.createDocumentFragment();
-    list.forEach((c) => frag.append(row(c)));
-    $('#a-list').replaceChildren(frag);
-    $('#a-empty').hidden = list.length > 0;
-    $('#a-empty').textContent = state.cars.length ? 'ما فيه نتائج.' : 'ما فيه سيارات للحين — اضغط "إضافة سيارة".';
-
-    const avail = state.cars.filter((c) => c.quantity > 0).length;
-    $('#a-total').textContent = state.cars.length;
-    $('#a-avail').textContent = avail;
-    $('#a-out').textContent = state.cars.length - avail;
-  }
-
-  function row(car) {
-    const r = el('div', 'a-row');
-
-    const thumb = el('div', 'a-thumb');
-    if (car.image) {
-      const img = el('img');
-      img.src = car.image;
-      img.alt = '';
-      img.loading = 'lazy';
-      thumb.append(img);
-    }
-
-    const info = el('div', 'a-info');
-    const meta = el('div', 'a-meta');
-    const ok = car.quantity > 0;
-    meta.append(el('span', `pill ${ok ? 'ok' : 'bad'}`, ok ? 'متوفر' : 'غير متوفر'));
-    meta.append(document.createTextNode(`أضافها ${car.addedBy}${car.updatedBy ? ` · آخر تعديل: ${car.updatedBy}` : ''}`));
-    info.append(el('small', 'cls', `CLASS ${car.class}`), el('h3', '', car.name), el('b', 'price-num', money(car.price)), meta);
-
-    const stepper = el('div', 'stepper');
-    const minus = el('button', '', '−');
-    const plus = el('button', '', '+');
-    minus.type = plus.type = 'button';
-    minus.setAttribute('aria-label', 'إنقاص الكمية');
-    plus.setAttribute('aria-label', 'زيادة الكمية');
-    minus.disabled = car.quantity <= 0;
-    minus.addEventListener('click', () => changeStock(car, -1));
-    plus.addEventListener('click', () => changeStock(car, 1));
-    stepper.append(minus, el('b', '', String(car.quantity)), plus);
-
-    const actions = el('div', 'a-actions');
-    const edit = el('button', 'btn ghost sm', 'تعديل');
-    const del = el('button', 'btn danger sm', 'حذف');
-    edit.type = del.type = 'button';
-    edit.addEventListener('click', () => openEditor(car));
-    del.addEventListener('click', () => askDelete(car));
-    actions.append(edit, del);
-
-    r.append(thumb, info, stepper, actions);
-    return r;
-  }
-
-  function replaceCar(car) {
-    const i = state.cars.findIndex((c) => c.id === car.id);
-    if (i >= 0) state.cars[i] = car; else state.cars.unshift(car);
-    render();
-  }
-
-  async function changeStock(car, delta) {
-    try {
-      const { car: updated } = await api('POST', `/api/admin/cars/${encodeURIComponent(car.id)}/stock`, { delta });
-      replaceCar(updated);
-    } catch (ex) {
-      toast(errorText(ex.message), 'bad');
-    }
-  }
-
-  $('#a-q').addEventListener('input', (e) => { state.q = e.target.value; render(); });
-
-  // ---------------- Modals ----------------
-  function openModal(m) {
-    m.hidden = false;
-    document.body.style.overflow = 'hidden';
-  }
-  function closeModal(m) {
-    m.hidden = true;
-    document.body.style.overflow = '';
-  }
-  ['#editor', '#confirm'].forEach((sel) => {
-    const m = $(sel);
-    m.addEventListener('click', (e) => { if (e.target === m || e.target.closest('[data-close]')) closeModal(m); });
-  });
-  document.addEventListener('keydown', (e) => {
-    if (e.key !== 'Escape') return;
-    ['#editor', '#confirm'].forEach((sel) => { if (!$(sel).hidden) closeModal($(sel)); });
-  });
-
-  // ---------------- Editor ----------------
-  function setPreview(src) {
-    const img = $('#f-preview');
-    img.hidden = !src;
-    if (src) img.src = src; else img.removeAttribute('src');
-    $('#drop').classList.toggle('has-image', Boolean(src));
-    $('#drop-hint b').textContent = src ? 'تغيير الصورة' : 'اضغط أو اسحب صورة السيارة هنا';
-  }
-
-  function openEditor(car = null) {
-    state.editing = car;
-    state.image = null;
-    $('#editor-title').textContent = car ? `تعديل: ${car.name}` : 'إضافة سيارة';
-    $('#f-name').value = car ? car.name : '';
-    $('#f-price').value = car ? car.price : '';
-    $('#f-qty').value = car ? car.quantity : 1;
-    $('#f-note').value = car ? car.note : '';
-    const cls = car ? car.class : 'C';
-    document.querySelectorAll('input[name="f-class"]').forEach((r) => { r.checked = r.value === cls; });
-    $('#f-image').value = '';
-    $('#form-error').hidden = true;
-    setPreview(car ? car.image : '');
-    openModal($('#editor'));
-    $('#f-name').focus();
-  }
-  $('#add-btn').addEventListener('click', () => openEditor());
-
-  // Shrinks big screenshots to at most 1600×1200 so saves stay fast and small
-  async function processImage(file) {
-    if (!/^image\/(jpeg|png|webp)$/.test(file.type)) throw new Error('bad_image');
-    if (file.size > 25 * 1024 * 1024) throw new Error('too_large');
-    const url = URL.createObjectURL(file);
-    try {
-      const img = await new Promise((resolve, reject) => {
-        const i = new Image();
-        i.onload = () => resolve(i);
-        i.onerror = () => reject(new Error('bad_image'));
-        i.src = url;
+      await api('/api/admin/login', {
+        name: $('#admin-name').value.trim(),
+        discordId: $('#admin-discord-id').value.trim(),
+        password: $('#admin-pass').value,
       });
-      const scale = Math.min(1, 1600 / img.naturalWidth, 1200 / img.naturalHeight);
-      const canvas = document.createElement('canvas');
-      canvas.width = Math.round(img.naturalWidth * scale);
-      canvas.height = Math.round(img.naturalHeight * scale);
-      canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
-      for (const quality of [0.86, 0.72, 0.6]) {
-        let data = canvas.toDataURL('image/webp', quality);
-        if (!data.startsWith('data:image/webp')) data = canvas.toDataURL('image/jpeg', quality);
-        if (data.length * 0.75 < 2.3 * 1024 * 1024) return data;
-      }
-      throw new Error('too_large');
-    } finally {
-      URL.revokeObjectURL(url);
-    }
-  }
-
-  async function takeFile(file) {
-    if (!file) return;
-    $('#form-error').hidden = true;
-    try {
-      state.image = await processImage(file);
-      setPreview(state.image);
+      $('#admin-pass').value = '';
+      await load();
     } catch (ex) {
-      $('#form-error').textContent = errorText(ex.message);
-      $('#form-error').hidden = false;
-    }
-  }
-  $('#f-image').addEventListener('change', (e) => takeFile(e.target.files[0]));
-  const drop = $('#drop');
-  drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('over'); });
-  drop.addEventListener('dragleave', () => drop.classList.remove('over'));
-  drop.addEventListener('drop', (e) => {
-    e.preventDefault();
-    drop.classList.remove('over');
-    takeFile(e.dataTransfer.files[0]);
-  });
-
-  $('#car-form').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const err = $('#form-error');
-    err.hidden = true;
-    const body = {
-      name: $('#f-name').value,
-      price: Number($('#f-price').value),
-      quantity: Number($('#f-qty').value),
-      note: $('#f-note').value,
-      class: ($('input[name="f-class"]:checked') || {}).value,
-    };
-    if (state.image) body.image = state.image;
-    if (body.name.trim().length < 2) { err.textContent = errorText('bad_name'); err.hidden = false; return; }
-    if ($('#f-price').value === '' || !Number.isInteger(body.price) || body.price < 0) { err.textContent = errorText('bad_price'); err.hidden = false; return; }
-    if (!Number.isInteger(body.quantity) || body.quantity < 0 || body.quantity > 9999) { err.textContent = errorText('bad_quantity'); err.hidden = false; return; }
-    if (!state.editing && !state.image) { err.textContent = errorText('image_required'); err.hidden = false; return; }
-
-    const btn = $('#save-btn');
-    btn.disabled = true;
-    btn.textContent = 'جاري الحفظ...';
-    try {
-      const { car } = state.editing
-        ? await api('PUT', `/api/admin/cars/${encodeURIComponent(state.editing.id)}`, body)
-        : await api('POST', '/api/admin/cars', body);
-      replaceCar(car);
-      closeModal($('#editor'));
-      toast(state.editing ? `تم تعديل ${car.name} ✔` : `تمت إضافة ${car.name} ✔`);
-    } catch (ex) {
-      err.textContent = errorText(ex.message);
+      err.textContent = {
+        wrong_password: 'كلمة السر غلط.',
+        name_required: 'اكتب اسمك.',
+        bad_discord_id: 'الـ ID غلط — لازم يكون أرقام بس (17 إلى 20 رقم).',
+        rate_limited: 'محاولات كثيرة، انتظر دقيقة.',
+      }[ex.message] || 'ما قدرنا ندخلك.';
       err.hidden = false;
     } finally {
       btn.disabled = false;
-      btn.textContent = 'حفظ';
     }
   });
 
-  // ---------------- Delete ----------------
-  function askDelete(car) {
-    state.deleting = car;
-    $('#confirm-text').textContent = `متأكد تبي تحذف "${car.name}" من المعرض؟ ما تقدر ترجعها.`;
-    openModal($('#confirm'));
-  }
-  $('#confirm-yes').addEventListener('click', async () => {
-    const car = state.deleting;
-    if (!car) return;
-    try {
-      await api('DELETE', `/api/admin/cars/${encodeURIComponent(car.id)}`, {});
-      state.cars = state.cars.filter((c) => c.id !== car.id);
-      render();
-      toast(`تم حذف ${car.name}`);
-    } catch (ex) {
-      toast(errorText(ex.message), 'bad');
-    }
-    closeModal($('#confirm'));
+  $('#admin-logout').addEventListener('click', async () => {
+    await api('/api/admin/logout', {}).catch(() => {});
+    showLogin(false);
   });
 
-  // ---------------- Start ----------------
-  async function boot() {
-    let me;
+  // ---------------- Data ----------------
+  async function load() {
     try {
-      me = await api('GET', '/api/admin/me');
-    } catch (ex) {
-      showLogin();
-      if (ex.message === 'admin_disabled') {
-        $('#login-error').textContent = errorText('admin_disabled');
-        $('#login-error').hidden = false;
-      }
+      data = await api('/api/admin/attempts');
+    } catch (e) {
+      if (e.status === 401) return showLogin(e.message === 'admin_disabled');
+      toast('ما قدرنا نجيب النتائج.', true);
       return;
     }
-    const who = $('#admin-who');
-    who.replaceChildren(document.createTextNode('مسجل باسم '), el('b', '', me.name));
-    $('#storage-warn').hidden = me.persistent;
     $('#login').hidden = true;
-    $('#dash').hidden = false;
-    state.cars = (await api('GET', '/api/admin/cars')).cars;
-    render();
+    $('#content').hidden = false;
+    $('#admin-chip').hidden = false;
+    $('#admin-who').textContent = data.admin;
+    renderStats();
+    renderRows();
+    renderHardest();
+    renderAdminLog();
+    const hash = location.hash.slice(1);
+    if (hash) openAttempt(hash);
   }
 
-  boot();
+  const isPending = (a) => a.passed && a.decision === 'pending';
+
+  function renderStats() {
+    const s = data.stats;
+    const cards = [
+      ['إجمالي المحاولات', s.total, ''],
+      ['ناجح', s.passed, 'ok'],
+      ['راسب', s.failed, 'bad'],
+      ['نسبة النجاح', `${s.passRate}<small>%</small>`, ''],
+      ['بانتظار الرتبة', data.attempts.filter(isPending).length, 'warn'],
+      ['يختبرون الحين', s.inProgress, ''],
+    ];
+    $('#stats').innerHTML = cards.map(([k, v, c]) => `<div class="glass stat"><span class="stat-k">${k}</span><span class="stat-v ${c}">${v}</span></div>`).join('');
+  }
+
+  function visibleAttempts() {
+    const q = query.trim().toLowerCase();
+    return data.attempts.filter((a) => {
+      if (filter === 'pass' && !a.passed) return false;
+      if (filter === 'fail' && a.passed) return false;
+      if (filter === 'pending' && !isPending(a)) return false;
+      if (q && !`${a.username} ${a.decidedBy?.name || ''}`.toLowerCase().includes(q)) return false;
+      return true;
+    });
+  }
+
+  // Who decided: the admin who marked it in this dashboard
+  function badge(a) {
+    if (!a.passed) return `<span class="badge bad">❌ مرفوض${a.timedOut ? ' · انتهى الوقت' : ''}</span>`;
+    if (isPending(a)) return '<span class="badge warn">⏳ بانتظار الرتبة</span>';
+    if (a.decision === 'rejected') return `<span class="badge bad">❌ رفضه: ${esc(a.decidedBy?.name || 'إداري')}</span>`;
+    return `<span class="badge staff">✅ فعّله: ${esc(a.decidedBy?.name || 'إداري')}</span>`;
+  }
+
+  const ACTIONS = { accept: '✅ تفعيل', reject: '❌ رفض', reset: '🔁 فتح محاولات جديدة' };
+
+  function renderAdminLog() {
+    const log = data.adminLog.slice(0, 12);
+    $('#admin-log').innerHTML = log.length
+      ? log.map((l) => `
+        <div class="log-item">
+          <p class="log-act">${ACTIONS[l.action] || l.action}</p>
+          <p>الإداري: <b>${esc(l.by.name)}</b>${idTag(l.by.discordId)}</p>
+          <p>${PLAYER_LABEL[l.action] || 'اللاعب'}: <b dir="ltr">${esc(l.username || l.userId)}</b>${idTag(l.playerDiscordId)}</p>
+          <small><bdi>${fmtDate(l.at)}</bdi></small>
+        </div>`).join('')
+      : '<p class="muted">ما فيه إجراءات لين الحين.</p>';
+  }
+
+  function renderRows() {
+    const list = visibleAttempts();
+    $('#rows').innerHTML = list.length
+      ? list.map((a, i) => `
+        <button class="row" data-id="${esc(a.id)}" style="--i:${Math.min(i, 20)}">
+          <img src="${esc(a.avatar)}" alt="" loading="lazy">
+          <span class="row-name"><b dir="ltr">${esc(a.username)}</b><span><bdi>${fmtDate(a.submittedAt)}</bdi> · محاولة ${a.attemptNo}${a.timeoutUntil ? ` · <em class="timeout">⏳ تايم أوت: باقي ${fmtLeft(a.timeoutUntil)}</em>` : ''}</span></span>
+          ${badge(a)}
+          <span class="row-score" style="color:${a.passed ? 'var(--ok)' : 'var(--bad)'}">${a.percent}%</span>
+        </button>`).join('')
+      : '<div class="empty">ما فيه نتائج لين الحين.</div>';
+  }
+
+  function renderHardest() {
+    $('#hardest').innerHTML = data.hardest.length
+      ? data.hardest.map((q) => `
+        <div class="hq">
+          <p>${esc(q.question)}</p>
+          <div class="bar"><i style="width:${q.rate}%"></i></div>
+          <small>${q.rate}% · ${q.correct}/${q.asked}</small>
+        </div>`).join('')
+      : '<p class="muted">يظهر هنا بعد أول محاولات.</p>';
+  }
+
+  function openAttempt(id) {
+    const a = data.attempts.find((x) => x.id === id);
+    if (!a) return;
+    history.replaceState(null, '', `#${id}`);
+    const questions = a.answers.map((q, i) => `
+      <div class="d-q ${q.isCorrect ? 'ok' : 'bad'}">
+        <h4>${i + 1}. ${esc(q.question)}</h4>
+        <p class="${q.isCorrect ? 'ok' : 'bad'}">${q.isCorrect ? '✔' : '✖'} جاوب: ${q.chosen === null ? '— لم يجاوب —' : esc(q.options[q.chosen])}</p>
+        ${q.isCorrect ? '' : `<p class="ok">الصحيح: ${esc(q.options[q.correct])}</p>`}
+      </div>`).join('');
+    const actionHistory = data.adminLog
+      .filter((l) => l.userId === a.userId)
+      .map((l) => `<p>${{ accept: '✅ تفعيل', reject: '❌ رفض', reset: '🔁 فتح محاولات جديدة' }[l.action] || l.action} — بواسطة <b>${esc(l.by.name)}</b> · <bdi>${fmtDate(l.at)}</bdi></p>`)
+      .join('');
+
+    // accepting is locked until the admin types the player's Discord ID
+    const decideButtons = isPending(a)
+      ? `<div class="player-id">
+           <label for="player-id">آيدي المتفعل في الدسكورد <small>(لازم قبل التفعيل)</small></label>
+           <input id="player-id" dir="ltr" inputmode="numeric" maxlength="20" placeholder="123456789012345678" autocomplete="off">
+           <p class="id-help">اضغط على اسم اللاعب في الدسكورد يمين ← <b>Copy User ID</b></p>
+         </div>
+         <button class="btn btn-ok" data-act="accept" data-id="${esc(a.id)}" disabled>✅ أعطيته الرتبة في الدسكورد</button>
+         <button class="btn btn-ghost" data-act="reject" data-id="${esc(a.id)}">❌ رفض</button>`
+      : '';
+
+    $('#drawer-body').innerHTML = `
+      <div class="d-head">
+        <img src="${esc(a.avatar)}" alt="">
+        <div><h3 dir="ltr">${esc(a.username)}</h3><p>يوزر الدسكورد — انسخه ودوّره في السيرفر</p></div>
+      </div>
+      <div class="d-meta">
+        ${badge(a)}
+        <span class="chip">الدرجة: <b>${a.score}/${a.total}</b> (${a.percent}%)</span>
+        <span class="chip">المدة: ${fmtDur(a.durationSec)}</span>
+        <span class="chip">المحاولة رقم ${a.attemptNo}</span>
+        ${a.focusLost == null ? '' : `<span class="chip ${a.focusLost >= 3 ? 'bad' : ''}">طلع من الصفحة: ${a.focusLost} مرة</span>`}
+        <span class="chip">${fmtDate(a.submittedAt)}</span>
+      </div>
+      ${a.decidedBy ? `<div class="d-granted ${a.decision === 'rejected' ? 'is-rejected' : ''}">
+        <p>${a.decision === 'rejected' ? '❌ تم الرفض' : '✅ تم التفعيل'} · <bdi>${fmtDate(a.decidedBy.at)}</bdi></p>
+        <p>الإداري: <b>${esc(a.decidedBy.name)}</b>${idTag(a.decidedBy.discordId)}</p>
+        <p>${a.decision === 'rejected' ? 'المرفوض' : 'المتفعل'}: <b dir="ltr">${esc(a.username)}</b>${idTag(a.discordId)}</p>
+      </div>` : ''}
+      ${a.timeoutUntil ? `<p class="d-granted is-rejected">❌ مرفوض — عليه تايم أوت، يقدر يعيد بعد <b>${fmtLeft(a.timeoutUntil)}</b> (<bdi>${fmtDate(a.timeoutUntil)}</bdi>)</p>` : ''}
+      ${isPending(a) ? '<p class="d-granted is-pending">⏳ نجح — أعطه الرتبة في الدسكورد بيدك، وبعدها اضغط الزر الأخضر تحت عشان ينسجل باسمك.</p>' : ''}
+      ${actionHistory ? `<div class="d-history"><h4>إجراءات الإدارة على هذا اللاعب</h4>${actionHistory}</div>` : ''}
+      ${questions}
+      <div class="d-actions">
+        ${decideButtons}
+        <button class="btn btn-ghost" data-act="reset" data-user="${esc(a.userId)}">🔁 فتح محاولات جديدة</button>
+      </div>`;
+    $('#drawer').hidden = false;
+    const idInput = $('#player-id');
+    if (idInput) {
+      idInput.addEventListener('input', () => {
+        idInput.value = idInput.value.replace(/\D/g, '');
+        $('#drawer [data-act="accept"]').disabled = !isDiscordId(idInput.value);
+      });
+      idInput.focus();
+    }
+  }
+
+  function closeDrawer() {
+    $('#drawer').hidden = true;
+    history.replaceState(null, '', location.pathname);
+  }
+
+  document.addEventListener('click', async (e) => {
+    const row = e.target.closest('.row');
+    if (row) return openAttempt(row.dataset.id);
+    if (e.target.closest('#drawer [data-close]')) return closeDrawer();
+
+    const seg = e.target.closest('#filter button');
+    if (seg) {
+      filter = seg.dataset.f;
+      document.querySelectorAll('#filter button').forEach((b) => b.classList.toggle('is-on', b === seg));
+      return renderRows();
+    }
+
+    const act = e.target.closest('[data-act]');
+    if (!act) return;
+    act.disabled = true;
+    try {
+      if (act.dataset.act === 'reset') {
+        await api('/api/admin/reset', { userId: act.dataset.user });
+        toast('تم تصفير محاولات اللاعب — يقدر يختبر من جديد.');
+      } else {
+        const playerDiscordId = ($('#player-id')?.value || '').trim();
+        if (act.dataset.act === 'accept' && !isDiscordId(playerDiscordId)) {
+          toast('اكتب الـ ID حق المتفعل أول.', true);
+          act.disabled = false;
+          return;
+        }
+        await api('/api/admin/decide', { attemptId: act.dataset.id, action: act.dataset.act, playerDiscordId: playerDiscordId || undefined });
+        toast(act.dataset.act === 'accept' ? 'انسجل التفعيل باسمك ✔' : 'تم الرفض.');
+      }
+      closeDrawer();
+      load();
+    } catch (err) {
+      if (err.message === 'already_decided') toast(`قرر فيه ${err.data.by || 'إداري ثاني'} قبلك.`, true);
+      else if (err.message === 'player_id_required' || err.message === 'bad_discord_id') toast('الـ ID غلط — لازم يكون أرقام بس (17 إلى 20 رقم).', true);
+      else if (err.status === 401) { closeDrawer(); showLogin(false); toast('سجّل دخول مرة ثانية واكتب الـ ID حقك.', true); return; }
+      else toast('العملية فشلت', true);
+      act.disabled = false;
+    }
+  });
+
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('#drawer').hidden) closeDrawer(); });
+  $('#search').addEventListener('input', (e) => { query = e.target.value; renderRows(); });
+  $('#reload').addEventListener('click', () => { load(); toast('تم التحديث'); });
+
+  load();
+  setInterval(() => { if ($('#drawer').hidden && !$('#content').hidden) load(); }, 30000);
 })();
