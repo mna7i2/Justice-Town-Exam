@@ -790,7 +790,7 @@ app.get('/auth/callback', wrap(async (req, res) => {
   const byRole = ROLE_LOGIN && roles.some((r) => ADMIN_ROLE_IDS.includes(r));
   const session = { discordId, via: 'discord', byRole };
   if (!discordAdminAllowed(session)) {
-    console.warn(`⚠ محاولة دخول من حساب ما عنده رتبة مسؤول التفعيل: ${cleanName(me.username)} (${discordId})`);
+    console.warn(`⚠ محاولة دخول من حساب ما عنده رتبة قسم التفعيل: ${cleanName(me.username)} (${discordId})`);
     return fail(ROLE_LOGIN ? 'no_role' : 'not_admin');
   }
   const name = cleanName(me.global_name) || cleanName(me.username) || 'إداري';

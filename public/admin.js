@@ -42,7 +42,7 @@
 
   // ---------------- Sign in ----------------
   const LOGIN_ERRORS = {
-    no_role: 'ما عندك رتبة مسؤول التفعيل في السيرفر.',
+    no_role: 'ما عندك رتبة قسم التفعيل في السيرفر.',
     not_admin: 'حسابك مو من حسابات الإدارة.',
     cancelled: 'لغيت الدخول.',
     expired: 'انتهت مهلة الدخول، جرّب مرة ثانية.',
@@ -59,7 +59,7 @@
     $('#login-form').hidden = discord;
     $('#discord-login').hidden = !discord;
     $('#login-text').textContent = discord
-      ? 'ادخل بحسابك في الدسكورد — ما يدخل إلا اللي عنده رتبة مسؤول التفعيل.'
+      ? 'ادخل بحسابك في الدسكورد — ما يدخل إلا اللي عنده رتبة قسم التفعيل.'
       : 'اكتب اسمك وآيديك في الدسكورد — ينسجلون عند كل قرار.';
     const err = $('#discord-error');
     err.textContent = loginError ? LOGIN_ERRORS[loginError] || LOGIN_ERRORS.discord : '';

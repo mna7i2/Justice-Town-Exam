@@ -2,7 +2,7 @@
 
 الموقع **للإدارة بس** — المواطن ما يدخله:
 
-1. الإداري يضغط **دخول بحساب Discord** — ما يدخل إلا اللي عنده **رتبة مسؤول التفعيل** (بدون بوت ولا كلمة سر).
+1. الإداري يضغط **دخول بحساب Discord** — ما يدخل إلا اللي عنده **رتبة قسم التفعيل** (بدون بوت ولا كلمة سر).
 2. يكتب يوزر المواطن ← لو عليه تايم أوت يطلع **❌ مرفوض** مع الوقت الباقي، ولو متفعل يطلع مين فعّله.
 3. يشارك شاشته مع المواطن في الدسكورد ويبدأ الاختبار، والمواطن يقول له الأجوبة.
 4. **ما يقدر يسلّم لين يكتب آيدي المواطن.**
@@ -66,7 +66,7 @@ SESSION_SECRET=كلام-عشوائي-طويل-40-حرف-أو-أكثر
 DISCORD_CLIENT_ID=          ← من Developer Portal ← OAuth2
 DISCORD_CLIENT_SECRET=      ← من Developer Portal ← OAuth2 ← Reset Secret
 DISCORD_GUILD_ID=           ← آيدي السيرفر (Copy Server ID)
-ADMIN_ROLE_ID=              ← آيدي رتبة مسؤول التفعيل (Copy Role ID)
+ADMIN_ROLE_ID=              ← آيدي رتبة قسم التفعيل (Copy Role ID)
 ADMIN_IDS=                  ← اختياري: أشخاص يدخلون حتى بدون الرتبة
 DISCORD_WEBHOOK_URL=        ← اختياري: عشان توصل النتائج لروم في الدسكورد
 DISCORD_INVITE_URL=         ← اختياري: رابط دعوة السيرفر
@@ -149,7 +149,7 @@ npm install --omit=dev && sudo npm i -g pm2 && pm2 start server.js --name justic
 
 | المشكلة | الحل |
 |---|---|
-| "ما عندك رتبة مسؤول التفعيل" | أعطه الرتبة في السيرفر، أو تأكد من `ADMIN_ROLE_ID` و `DISCORD_GUILD_ID` |
+| "ما عندك رتبة قسم التفعيل" | أعطه الرتبة في السيرفر، أو تأكد من `ADMIN_ROLE_ID` و `DISCORD_GUILD_ID` |
 | بعد الدخول يقول Discord "Invalid redirect_uri" | ضيف `https://رابط-موقعك/auth/callback` بالضبط في Redirects حق التطبيق |
 | النتائج ما توصل للروم | تأكد من `DISCORD_WEBHOOK_URL` (لازم يبدأ بـ `https://discord.com/api/webhooks/`) |
 | الإداريين ينطردون من اللوحة كل شوي | حط `SESSION_SECRET` ثابت في Environment |

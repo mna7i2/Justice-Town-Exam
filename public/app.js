@@ -129,7 +129,7 @@
 
   // the Discord sign-in comes back as /?login_error=… when it's refused
   const LOGIN_ERRORS = {
-    no_role: 'ما عندك رتبة مسؤول التفعيل في السيرفر.',
+    no_role: 'ما عندك رتبة قسم التفعيل في السيرفر.',
     not_admin: 'حسابك مو من حسابات الإدارة.',
     cancelled: 'لغيت الدخول.',
     expired: 'انتهت مهلة الدخول، جرّب مرة ثانية.',
